@@ -1,0 +1,10 @@
+Binaries
+DerivedDataCache
+Intermediate
+*.xcworkspace
+Saved
+.vs/
+*.opendb
+*.db
+Build/
+*.sln

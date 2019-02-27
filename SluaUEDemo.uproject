@@ -1,0 +1,16 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "{A47F2EEF-4132-D59D-A579-829A3FC809E4}",
+	"Category": "",
+	"Description": "",
+	"Modules": [
+		{
+			"Name": "SluaUEDemo",
+			"Type": "Runtime",
+			"LoadingPhase": "Default",
+			"AdditionalDependencies": [
+				"Engine"
+			]
+		}
+	]
+}
