@@ -41,6 +41,10 @@ static void debug_hook_c(NS_SLUA::lua_State *L, NS_SLUA::lua_Debug *ar)
 	{
 		if (lua_getinfo(L, "nSl", ar) != 0)
 		{
+			if (ar->linedefined == -1 && ar->name == nullptr)
+			{
+				return;
+			}
 			FString functionName = ar->short_src;
 			functionName += ":";
 			functionName += FString::FromInt(ar->linedefined);
@@ -48,15 +52,22 @@ static void debug_hook_c(NS_SLUA::lua_State *L, NS_SLUA::lua_Debug *ar)
 			functionName += ar->name;
 			PROFILER_BEGIN_WATCHER_WITH_FUNC_NAME(functionName)
 		}
-		else
-		{
-			FString functionName = "invalid_lua_function";
-			PROFILER_BEGIN_WATCHER_WITH_FUNC_NAME(functionName)
-		}
 	}
 	else if (ar->event == slua_profiler_hook_event::RETURN)
 	{
-		PROFILER_END_WATCHER()
+		if (lua_getinfo(L, "nSl", ar) != 0)
+		{
+			if (ar->linedefined == -1 && ar->name == nullptr)
+			{
+				return;
+			}
+			FString functionName = ar->short_src;
+			functionName += ":";
+			functionName += FString::FromInt(ar->linedefined);
+			functionName += " ";
+			functionName += ar->name;
+			PROFILER_END_WATCHER()
+		}
 	}
 }
 
@@ -222,6 +233,13 @@ void Profiler::EndWatch()
 
 void Fslua_profileModule::ClearCurProfiler()
 {
+	if (sluaProfilerInspector.IsValid() && sluaProfilerInspector->GetNeedProfilerCleared())
+	{
+		curProfiler.Empty();
+		currentLayer = 0;
+		sluaProfilerInspector->SetNeedProfilerCleared(false);
+	}
+
 	for (auto &iter : curProfilersArray)
 	{
 		iter.Empty();
