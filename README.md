@@ -4,6 +4,9 @@
 
 此工程改造于Wes Bunn的UMG使用示例工程，此工程使用slua_unreal插件替代unreal蓝图实现了原工程的所有功能，旨在向用户展示slua_unreal插件的使用方法及部分功能特性
 
+# 工程使用的引擎版本
+
+此工程使用UnrealEngine 4.21版本开发，需要使用UnrealEngine 4.21及以上版本方可正常打开工程
 
 
 原始工程地址
