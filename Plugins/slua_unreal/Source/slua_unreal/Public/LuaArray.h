@@ -17,15 +17,23 @@
 #include "UObject/UnrealType.h"
 #include "UObject/GCObject.h"
 #include "Runtime/Launch/Resources/Version.h"
+#include "PropertyUtil.h"
 
-namespace slua {
+namespace NS_SLUA {
 
     class SLUA_UNREAL_API LuaArray : public FGCObject {
     public:
         static void reg(lua_State* L);
         static void clone(FScriptArray* destArray, UProperty* p, const FScriptArray* srcArray);
 		static int push(lua_State* L, UProperty* prop, FScriptArray* array);
-		static int push(lua_State* L,UArrayProperty* prop,UObject* obj);
+		static int push(lua_State* L, UArrayProperty* prop, UObject* obj);
+
+		template<typename T>
+		static int push(lua_State* L, const TArray<T>& v) {
+			UProperty* prop = PropertyProto::createProperty(PropertyProto::get<T>());
+			auto array = reinterpret_cast<const FScriptArray*>(&v);
+			return push(L, prop, const_cast<FScriptArray*>(array));
+		}
 
 		LuaArray(UProperty* prop, FScriptArray* buf);
 		LuaArray(UArrayProperty* prop, UObject* obj);
@@ -84,10 +92,12 @@ namespace slua {
         static int gc(lua_State* L);
 
 		struct Enumerator {
-			LuaArray* arr;
-			int32 index;
-
+			LuaArray* arr = nullptr;
+			// hold referrence of LuaArray, avoid gc
+			class LuaVar* holder = nullptr;
+			int32 index = 0;
 			static int gc(lua_State* L);
+			~Enumerator();
 		};
     };
 }

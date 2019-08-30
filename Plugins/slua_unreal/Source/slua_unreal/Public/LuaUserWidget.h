@@ -18,15 +18,17 @@
 #include "GameFramework/Actor.h"
 #include "LuaUserWidget.generated.h"
 
-using slua_Luabase = slua::LuaBase;
+using slua_Luabase = NS_SLUA::LuaBase;
 
 UCLASS()
-class SLUA_UNREAL_API ULuaUserWidget : public UUserWidget, public slua_Luabase {
+class SLUA_UNREAL_API ULuaUserWidget : public UUserWidget, public slua_Luabase, public ILuaTableObjectInterface {
     GENERATED_BODY()
 
 protected:
-	virtual void NativeConstruct();
-	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime);
+	virtual void NativeOnInitialized() override;
+	virtual void NativeConstruct() override;
+	virtual void NativeDestruct() override;
+	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
 public:	
 	// below UPROPERTY and UFUNCTION can't be put to macro LUABASE_BODY
 	// so copy & paste them
@@ -41,6 +43,10 @@ public:
 
 	virtual void ProcessEvent(UFunction* func, void* params) override;
 	void superTick() override;
+
+	virtual NS_SLUA::LuaVar getSelfTable() const {
+		return luaSelfTable;
+	}
 private:
 	FGeometry currentGeometry;
 };

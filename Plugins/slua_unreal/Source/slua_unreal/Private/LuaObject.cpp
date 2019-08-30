@@ -17,9 +17,8 @@
 #endif
 
 #include "LuaObject.h"
+#include "LuaVar.h"
 #include "LuaDelegate.h"
-#include "UObject/UObjectGlobals.h"
-#include "UObject/StrongObjectPtr.h"
 #include "UObject/StructOnScope.h"
 #include "UObject/Class.h"
 #include "UObject/UnrealType.h"
@@ -31,33 +30,40 @@
 #include "Log.h"
 #include "LuaState.h"
 #include "LuaWrapper.h"
-#include "LuaEnums.h"
 #include "SluaUtil.h"
 #include "LuaReference.h"
+#include "LuaBase.h"
 
-namespace slua { 
+namespace NS_SLUA { 
 
 	TMap<UClass*,LuaObject::PushPropertyFunction> pusherMap;
 	TMap<UClass*,LuaObject::CheckPropertyFunction> checkerMap;
+
+	struct ExtensionField {
+		bool isFunction = true;
+		union {
+			struct {
+				lua_CFunction getter;
+				lua_CFunction setter;
+			};
+			lua_CFunction func;
+		};
+
+		ExtensionField(lua_CFunction funcf) : isFunction(true), func(funcf) {
+			ensure(funcf);
+		}
+		ExtensionField(lua_CFunction getterf, lua_CFunction setterf) 
+			: isFunction(false)
+			, getter(getterf)
+			, setter(setterf) {}
+	};
     
-    TMap< UClass*, TMap<FString,lua_CFunction> > extensionMMap;
-    TMap< UClass*, TMap<FString,lua_CFunction> > extensionMMap_static;
+    TMap< UClass*, TMap<FString, ExtensionField> > extensionMMap;
+    TMap< UClass*, TMap<FString, ExtensionField> > extensionMMap_static;
 
     namespace ExtensionMethod{
         void init();
     }
-
-	FString getUObjName(UObject* obj) {
-#if WITH_EDITOR
-		if (auto ld=Cast<ULuaDelegate>(obj)) {
-			return ld->getPropName();
-		} else {
-			return obj->GetFName().ToString();
-		}
-#else
-		return obj->GetFName().ToString();
-#endif
-	}
 
     DefTypeName(LuaStruct)
 
@@ -82,134 +88,110 @@ namespace slua {
     void LuaObject::addExtensionMethod(UClass* cls,const char* n,lua_CFunction func,bool isStatic) {
         if(isStatic) {
             auto& extmap = extensionMMap_static.FindOrAdd(cls);
-            extmap.Add(n,func);
+            extmap.Add(n, ExtensionField(func));
         }
         else {
             auto& extmap = extensionMMap.FindOrAdd(cls);
-            extmap.Add(n,func);
+            extmap.Add(n, ExtensionField(func));
         }
     }
 
-	UObject* getPropertyOutter() {
-		static TStrongObjectPtr<UStruct> propOuter;
-		if (!propOuter.IsValid()) propOuter.Reset(NewObject<UStruct>((UObject*)GetTransientPackage()));
-		return propOuter.Get();
-	}
-	
-	UProperty* LuaObject::createProperty(lua_State* L, UE4CodeGen_Private::EPropertyClass type, UClass* cls) {
-		UProperty* p = nullptr;
-		UObject* outer = getPropertyOutter();
-		switch (type) {
-			case UE4CodeGen_Private::EPropertyClass::Byte:
-				p = NewObject<UProperty>(outer, UByteProperty::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Int8:
-				p = NewObject<UProperty>(outer, UInt8Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Int16:
-				p = NewObject<UProperty>(outer, UInt16Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Int:
-				p = NewObject<UProperty>(outer, UIntProperty::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Int64:
-				p = NewObject<UProperty>(outer, UInt64Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::UInt16:
-				p = NewObject<UProperty>(outer, UUInt16Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::UInt32:
-				p = NewObject<UProperty>(outer, UUInt32Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::UInt64:
-				p = NewObject<UProperty>(outer, UUInt64Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::UnsizedInt:
-				p = NewObject<UProperty>(outer, UUInt64Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::UnsizedUInt:
-				p = NewObject<UProperty>(outer, UUInt64Property::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Float:
-				p = NewObject<UProperty>(outer, UFloatProperty::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Double:
-				p = NewObject<UProperty>(outer, UDoubleProperty::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Bool:
-				p = NewObject<UProperty>(outer, UBoolProperty::StaticClass());
-                break;
-			case UE4CodeGen_Private::EPropertyClass::Object: {
-				auto op = NewObject<UObjectProperty>(outer, UObjectProperty::StaticClass());
-				op->SetPropertyClass(cls);
-				p = op;
-				break;
-			}
-			case UE4CodeGen_Private::EPropertyClass::Str:
-				p = NewObject<UProperty>(outer, UStrProperty::StaticClass());
-                break;
+	void LuaObject::addExtensionProperty(UClass * cls, const char * n, lua_CFunction getter, lua_CFunction setter, bool isStatic)
+	{
+		if (isStatic) {
+			auto& extmap = extensionMMap_static.FindOrAdd(cls);
+			extmap.Add(n, ExtensionField(getter,setter));
 		}
-		if (p) {
-			FArchive ar;
-			p->LinkWithoutChangingOffset(ar);
+		else {
+			auto& extmap = extensionMMap.FindOrAdd(cls);
+			extmap.Add(n, ExtensionField(getter, setter));
 		}
-			
-        return p;
 	}
 
     static int findMember(lua_State* L,const char* name) {
        int popn = 0;
         if ((++popn, lua_getfield(L, -1, name) != 0)) {
+			lua_remove(L, -2); // remove mt
             return 1;
         } else if ((++popn, lua_getfield(L, -2, ".get")) && (++popn, lua_getfield(L, -1, name))) {
             lua_pushvalue(L, 1);
             lua_call(L, 1, 1);
+			lua_remove(L, -2); // remove .get
             return 1;
         } else {
             // find base
             lua_pop(L, popn);
-            int t = lua_getfield(L,-1, "__base");
-            if(t==LUA_TTABLE) {
+            lua_getfield(L,-1, "__base");
+			luaL_checktype(L, -1, LUA_TTABLE);
+			// for each base
+            {
                 size_t cnt = lua_rawlen(L,-1);
                 int r = 0;
                 for(size_t n=0;n<cnt;n++) {
                     lua_geti(L,-1,n+1);
                     const char* tn = lua_tostring(L,-1);
                     lua_pop(L,1); // pop tn
-                    t = luaL_getmetatable(L,tn);
-                    if(t==LUA_TTABLE) r = findMember(L,name);
-                    lua_remove(L,-2); // remove tn table
-                    if(r!=0) break;
+                    luaL_getmetatable(L,tn);
+					luaL_checktype(L, -1, LUA_TTABLE);
+					if (findMember(L, name)) return 1;
                 }
                 lua_remove(L,-2); // remove __base
                 return r;
             }
-            else {
-                // pop __base
-                lua_pop(L,1);
-                return 0;
-            }
         }
     }
+
+	static bool setMember(lua_State* L, const char* name) {
+		int popn = 0;
+		if ((++popn, lua_getfield(L, -1, ".set")) && (++popn, lua_getfield(L, -1, name))) {
+			// push ud
+			lua_pushvalue(L, 1);
+			// push value
+			lua_pushvalue(L, 3);
+			// call setter
+			lua_call(L, 2, 0);
+			lua_pop(L, 1); // pop .set
+			return true;
+		}
+		else {
+			// find base
+			lua_pop(L, popn);
+			lua_getfield(L, -1, "__base");
+			luaL_checktype(L, -1, LUA_TTABLE);
+			// for each base
+			{
+				size_t cnt = lua_rawlen(L, -1);
+				for (size_t n = 0; n < cnt; n++) {
+					lua_geti(L, -1, n + 1);
+					const char* tn = lua_tostring(L, -1);
+					lua_pop(L, 1); // pop tn
+					luaL_getmetatable(L, tn);
+					luaL_checktype(L, -1, LUA_TTABLE);
+					if (setMember(L, name)) return true;
+				}
+			}
+			// pop __base
+			lua_pop(L, 1);
+			return false;
+		}
+	}
 
 	int LuaObject::classIndex(lua_State* L) {
 		lua_getmetatable(L, 1);
 		const char* name = checkValue<const char*>(L, 2);
-		return findMember(L,name);
+		if (!findMember(L, name))
+			luaL_error(L, "can't get %s", name);
+		lua_remove(L, -2);
+		return 1;
 	}
 
 	int LuaObject::classNewindex(lua_State* L) {
 		lua_getmetatable(L, 1);
 		const char* name = checkValue<const char*>(L, 2);
-		if (lua_getfield(L, lua_upvalueindex(1)/*.set*/, name) != 0) {
-			lua_pushvalue(L, 1);
-			lua_pushvalue(L, 3);
-			lua_call(L, 2, 1);
-			return 1;
-		} else {
-			lua_pushnil(L);
-			return 1;
-		}
+		if(!setMember(L, name))
+			luaL_error(L, "can't set %s", name);
+		lua_pop(L, 1);
+		return 0;
 	}
 
 	static void setMetaMethods(lua_State* L) {
@@ -260,7 +242,13 @@ namespace slua {
         lua_pop(L,1);
 	}
 
-    bool LuaObject::isBaseTypeOf(lua_State* L,const char* tn,const char* base) {
+	int LuaObject::push(lua_State * L, const LuaLString& lstr)
+	{
+		lua_pushlstring(L, lstr.buf, lstr.len);
+		return 1;
+	}
+
+	bool LuaObject::isBaseTypeOf(lua_State* L,const char* tn,const char* base) {
         AutoStack as(L);
         int t = luaL_getmetatable(L,tn);
         if(t!=LUA_TTABLE)
@@ -322,7 +310,7 @@ namespace slua {
         lua_pop(L,3);
 	}
 
-	bool LuaObject::matchType(lua_State* L, int p, const char* tn) {
+	bool LuaObject::matchType(lua_State* L, int p, const char* tn, bool noprefix) {
 		AutoStack autoStack(L);
 		if (!lua_isuserdata(L, p)) {
 			return false;
@@ -336,7 +324,9 @@ namespace slua {
 			return false;
 		}
 		auto name = luaL_checkstring(L, -1);
-        return strcmp(name,tn)==0;
+		// skip first prefix "F" or "U" or "A"
+		if(noprefix) return strcmp(name+1, tn) == 0;
+		else return strcmp(name,tn)==0;
 	}
 
     LuaObject::PushPropertyFunction LuaObject::getPusher(UClass* cls) {
@@ -391,16 +381,30 @@ namespace slua {
     int searchExtensionMethod(lua_State* L,UClass* cls,const char* name,bool isStatic=false) {
 
         // search class and its super
-        TMap<FString,lua_CFunction>* mapptr=nullptr;
+        TMap<FString,ExtensionField>* mapptr=nullptr;
         while(cls!=nullptr) {
             mapptr = isStatic?extensionMMap_static.Find(cls):extensionMMap.Find(cls);
             if(mapptr!=nullptr) {
-                // find function
-                auto funcptr = mapptr->Find(name);
-                if(funcptr!=nullptr) {
-                    lua_pushcfunction(L,*funcptr);
-                    return 1;
-                }
+                // find field
+                auto fieldptr = mapptr->Find(name);
+				if (fieldptr != nullptr) {
+					// is function
+					if (fieldptr->isFunction) {
+						lua_pushcfunction(L, fieldptr->func);
+						return 1;
+					} 
+					// is property
+					else {
+						if (!fieldptr->getter) luaL_error(L, "Property %s is set only", name);
+						lua_pushcfunction(L, fieldptr->getter);
+						if (!isStatic) {
+							lua_pushvalue(L, 1); // push self
+							lua_call(L, 1, 1);
+						} else 
+							lua_call(L, 0, 1);
+						return 1;
+					}
+				}
             }
             cls=cls->GetSuperClass();
         }   
@@ -428,7 +432,7 @@ namespace slua {
             
             uint8* buf = (uint8*)FMemory::Malloc(size);
             uss->InitializeStruct(buf);
-            LuaStruct* ls=new LuaStruct{buf,size,uss};
+            LuaStruct* ls=new LuaStruct(buf,size,uss);
             LuaObject::push(L,ls);
             return 1;
         }
@@ -464,7 +468,7 @@ namespace slua {
 				if ((propflag&CPF_ReturnParm))
 					continue;
 			}
-			else if (propflag&CPF_OutParm)
+			else if (IsRealOutParam(propflag))
 				continue;
 
             fillParamFromState(L,prop,params+prop->GetOffset_ForInternal(),i);
@@ -493,7 +497,8 @@ namespace slua {
             if(propflag&CPF_ReturnParm)
                 continue;
 
-            if((propflag&CPF_OutParm) && !(propflag&CPF_ConstParm))
+			// out params should be not const and not readonly
+            if(IsRealOutParam(propflag))
                 ret += LuaObject::push(L,p,params+p->GetOffset_ForInternal());
         }
         
@@ -527,7 +532,7 @@ namespace slua {
 		FStructOnScope params(func);
 		fillParam(L, offset, func, params.GetStructMemory());
 		{
-			FEditorScriptExecutionGuard scriptGuard;
+			// FEditorScriptExecutionGuard scriptGuard;
 			// call function with params
 			obj->ProcessEvent(func, params.GetStructMemory());
 		}
@@ -538,22 +543,13 @@ namespace slua {
     // find ufunction from cache
     UFunction* LuaObject::findCacheFunction(lua_State* L, UClass* cls,const char* fname) {
         auto state = LuaState::get(L);
-        auto clsmap = state->classMap.Find(cls);
-        if(!clsmap) return nullptr;
-        auto it = (*clsmap)->Find(UTF8_TO_TCHAR(fname));
-        if(it!=nullptr && (*it)->IsValidLowLevelFast())
-			return *it;
-        return nullptr;
+		return state->classMap.find(cls, fname);
     }
 
     // cache ufunction for reuse
     void LuaObject::cacheFunction(lua_State* L,UClass* cls,const char* fname,UFunction* func) {
         auto state = LuaState::get(L);
-        auto clsmap = state->classMap.Find(cls);
-        TMap<FString,UFunction*>* clsmapPtr = nullptr;
-        if(!clsmap) clsmapPtr = state->classMap.Add(cls,new TMap<FString,UFunction*>());
-        else clsmapPtr = *clsmap;
-        clsmapPtr->Add(UTF8_TO_TCHAR(fname),func);
+        state->classMap.cache(cls,fname,func);
     }
 
     
@@ -692,7 +688,44 @@ namespace slua {
 		return 1;
 	}
 
-    template<typename T>
+	void LuaObject::setupMetaTable(lua_State* L, const char* tn, lua_CFunction setupmt, lua_CFunction gc)
+	{
+		if (luaL_newmetatable(L, tn)) {
+			if (setupmt)
+				setupmt(L);
+			if (gc) {
+				lua_pushcfunction(L, gc);
+				lua_setfield(L, -2, "__gc");
+			}
+		}
+		lua_setmetatable(L, -2);
+	}
+
+	void LuaObject::setupMetaTable(lua_State* L, const char* tn, lua_CFunction setupmt, int gc)
+	{
+		if (luaL_newmetatable(L, tn)) {
+			if (setupmt)
+				setupmt(L);
+			if (gc) {
+				lua_pushvalue(L, gc);
+				lua_setfield(L, -2, "__gc");
+			}
+		}
+		lua_setmetatable(L, -2);
+	}
+
+	void LuaObject::setupMetaTable(lua_State* L, const char* tn, lua_CFunction gc)
+	{
+		luaL_getmetatable(L, tn);
+		if (lua_isnil(L, -1))
+			luaL_error(L, "Can't find type %s exported", tn);
+
+		lua_pushcfunction(L, gc);
+		lua_setfield(L, -2, "__gc");
+		lua_setmetatable(L, -2);
+	}
+
+	template<typename T>
     int pushUProperty(lua_State* L,UProperty* prop,uint8* parms) {
         auto p=Cast<T>(prop);
         ensure(p);
@@ -722,6 +755,13 @@ namespace slua {
 		return LuaMap::push(L, p->KeyProp, p->ValueProp, v);
     }
 
+	int pushUWeakProperty(lua_State* L, UProperty* prop, uint8* parms) {
+		auto p = Cast<UWeakObjectProperty>(prop);
+		ensure(p);
+		FWeakObjectPtr v = p->GetPropertyValue(parms);
+		return LuaObject::push(L, v);
+	}
+
     int checkUArrayProperty(lua_State* L,UProperty* prop,uint8* parms,int i) {
         auto p = Cast<UArrayProperty>(prop);
         ensure(p);
@@ -750,7 +790,7 @@ namespace slua {
 		uint8* buf = (uint8*)FMemory::Malloc(size);
 		uss->InitializeStruct(buf);
 		uss->CopyScriptStruct(buf, parms);
-		return LuaObject::push(L, new LuaStruct{buf,size,uss});
+		return LuaObject::push(L, new LuaStruct(buf,size,uss));
     }  
 
 	int pushUDelegateProperty(lua_State* L, UProperty* prop, uint8* parms) {
@@ -808,15 +848,35 @@ namespace slua {
 		return 0;
 	}
 
+	template<>
+	int checkUProperty<UObjectProperty>(lua_State* L, UProperty* prop, uint8* parms, int i) {
+		auto p = Cast<UObjectProperty>(prop);
+		ensure(p);
+		UObject* arg = LuaObject::checkValue<UObject*>(L, i);
+		if (arg && arg->GetClass() != p->PropertyClass && !arg->GetClass()->IsChildOf(p->PropertyClass))
+			luaL_error(L, "arg %d expect %s, but got %s", i,
+				p->PropertyClass ? TCHAR_TO_UTF8(*p->PropertyClass->GetName()) : "", 
+				arg->GetClass() ? TCHAR_TO_UTF8(*arg->GetClass()->GetName()) : "");
+
+		p->SetPropertyValue(parms, arg);
+		return LuaObject::push(L, arg);
+	}
+
     int checkUStructProperty(lua_State* L,UProperty* prop,uint8* parms,int i) {
         auto p = Cast<UStructProperty>(prop);
         ensure(p);
         auto uss = p->Struct;
 
-		if (LuaWrapper::checkValue(L, p, uss, parms, i))
-			return 0;
+		// skip first char to match type
+		if (LuaObject::matchType(L, i, TCHAR_TO_UTF8(*uss->GetName()),true)) {
+			if (LuaWrapper::checkValue(L, p, uss, parms, i))
+				return 0;
+		}
 
 		LuaStruct* ls = LuaObject::checkValue<LuaStruct*>(L, i);
+		if(!ls)
+			luaL_error(L, "expect struct but got nil");
+
 		if (p->GetSize() != ls->size)
 			luaL_error(L, "expect struct size == %d, but got %d", p->GetSize(), ls->size);
 		p->CopyCompleteValue(parms, ls->buf);
@@ -873,15 +933,15 @@ namespace slua {
 		return checkType(L, -1, tn);
     }
 
-    void LuaObject::addRef(lua_State* L,UObject* obj) {
+    void LuaObject::addRef(lua_State* L,UObject* obj,void* ud) {
         auto sl = LuaState::get(L);
-        sl->addRef(obj);
+        sl->addRef(obj,ud);
     }
 
 
     void LuaObject::removeRef(lua_State* L,UObject* obj) {
         auto sl = LuaState::get(L);
-        sl->removeRef(obj);
+        sl->unlinkUObject(obj);
     }
 
 	void LuaObject::releaseLink(lua_State* L, void* prop) {
@@ -903,13 +963,13 @@ namespace slua {
         lua_pop(L,1); // pop cache table        
     }
 
-	void LuaObject::removeFromCache(lua_State * L, GenericUserData* ud)
+	void LuaObject::removeFromCache(lua_State * L, void* obj)
 	{
 		// get cache table
 		LuaState* ls = LuaState::get(L);
 		lua_geti(L, LUA_REGISTRYINDEX, ls->cacheObjRef);
 		ensure(lua_type(L, -1) == LUA_TTABLE);
-		lua_pushlightuserdata(L, ud->ud);
+		lua_pushlightuserdata(L, obj);
 		lua_pushnil(L);
 		// cache[obj] = nil
 		lua_rawset(L, -3);
@@ -917,17 +977,15 @@ namespace slua {
 		lua_pop(L, 1);
 	}
 
-    int LuaObject::removeFromCacheGC(lua_State* L) {
-        int p = lua_upvalueindex(1);
-        // get real gc function
-        lua_CFunction gc = lua_tocfunction(L,p);
-        gc(L);
-        // check UD as light userdata
-        GenericUserData* ud = (GenericUserData*)lua_touserdata(L,1);
-		ud->flag |= UD_HADFREE;
-		removeFromCache(L,ud);
-        return 0;
-    }
+	void LuaObject::deleteFGCObject(lua_State* L, FGCObject * obj)
+	{
+		if (!IsGarbageCollecting())
+			delete obj;
+		else {
+			auto ls = LuaState::get(L);
+			ls->deferDelete.Add(obj);
+		}
+	}
 
 	void LuaObject::createTable(lua_State* L, const char * tn)
 	{
@@ -954,6 +1012,20 @@ namespace slua {
         return pushGCObject<UScriptStruct*>(L,cls,"UScriptStruct",setupStructMT,gcStructClass);
     }
 
+	int LuaObject::pushEnum(lua_State * L, UEnum * e)
+	{
+		// return a enum as table
+		lua_newtable(L);
+		int num = e->NumEnums();
+		for (int i = 0; i < num; i++) {
+			FString name = e->GetNameStringByIndex(i);
+			int64 value = e->GetValueByIndex(i);
+			lua_pushinteger(L, value);
+			lua_setfield(L, -2, TCHAR_TO_UTF8(*name));
+		}
+		return 1;
+	}
+
     int LuaObject::gcObject(lua_State* L) {
 		CheckUDGC(UObject,L,1);
         removeRef(L,UD);
@@ -974,17 +1046,31 @@ namespace slua {
 
 	int LuaObject::gcStruct(lua_State* L) {
 		CheckUDGC(LuaStruct, L, 1);
-		delete UD;
+		deleteFGCObject(L,UD);
 		return 0;
 	}
 
-    int LuaObject::push(lua_State* L, UObject* obj) {
-        if(!obj) {
-            lua_pushnil(L);
-            return 1;
-        }
-        return pushGCObject<UObject*>(L,obj,"UObject",setupInstanceMT,gcObject);
+    int LuaObject::push(lua_State* L, UObject* obj, bool rawpush) {
+		if (!obj) return pushNil(L);
+		if (!rawpush) {
+			if (auto it = Cast<ILuaTableObjectInterface>(obj)) {
+				return ILuaTableObjectInterface::push(L, it);
+			}
+		}
+		return pushGCObject<UObject*>(L,obj,"UObject",setupInstanceMT,gcObject);
     }
+
+	int LuaObject::push(lua_State* L, FWeakObjectPtr ptr) {
+		if (!ptr.IsValid()) {
+			lua_pushnil(L);
+			return 1;
+		}
+		UObject* obj = ptr.Get();
+		if (getFromCache(L, obj, "UObject")) return 1;
+		int r = pushWeakType(L, new WeakUObjectUD(ptr));
+		if (r) cacheObj(L, obj);
+		return r;
+	}
     
     template<typename T>
     inline void regPusher() {
@@ -1020,6 +1106,7 @@ namespace slua {
         regPusher(UStructProperty::StaticClass(),pushUStructProperty);
 		regPusher(UEnumProperty::StaticClass(), pushEnumProperty);
 		regPusher(UClassProperty::StaticClass(), pushUClassProperty);
+		regPusher(UWeakObjectProperty::StaticClass(), pushUWeakProperty);
 		
 		regChecker<UIntProperty>();
 		regChecker<UUInt32Property>();
@@ -1034,7 +1121,7 @@ namespace slua {
 		regChecker<UBoolProperty>();
         regChecker<UNameProperty>();
         regChecker<UTextProperty>();
-        regChecker<UObjectProperty>();
+		regChecker<UObjectProperty>();
         regChecker<UStrProperty>();
         regChecker<UEnumProperty>();
 
@@ -1045,7 +1132,6 @@ namespace slua {
 		regChecker(UClassProperty::StaticClass(), checkUClassProperty);
 		
 		LuaWrapper::init(L);
-		LuaEnums::init(L);
         ExtensionMethod::init();
     }
 
@@ -1184,7 +1270,7 @@ namespace slua {
     int LuaObject::setupClassMT(lua_State* L) {
         lua_pushcfunction(L,classConstruct);
         lua_setfield(L, -2, "__call");
-        lua_pushcfunction(L,slua::classIndex);
+        lua_pushcfunction(L,NS_SLUA::classIndex);
 		lua_setfield(L, -2, "__index");
 		lua_pushcfunction(L, objectToString);
 		lua_setfield(L, -2, "__tostring");

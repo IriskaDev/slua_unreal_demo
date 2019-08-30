@@ -2,6 +2,7 @@ local Common = require ("Common")
 local Dispatcher = require ("Dispatcher")
 local InventoryData = require ("InventoryData")
 local Events = require ("Events")
+local UEnums = require ("UEnums")
 
 local mt = {}
 
@@ -66,7 +67,8 @@ function mt:BePickedup(picker)
 end
 
 function mt:Use()
-    local character = self["MyCharacter"]
+    -- local character = self["MyCharacter"]
+    local character = Common.GetMyCharacter(self)
     local fire = slua.loadClass("Blueprint'/Game/Blueprints/Fire.Fire'")
 
     local dropLocation = character["DropLocation"]

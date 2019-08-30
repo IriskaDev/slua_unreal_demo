@@ -13,10 +13,13 @@
 
 #pragma once
 
+#include "CoreMinimal.h"
 #include "Containers/Ticker.h"
 #include "InputCoreTypes.h"
 #include "ModuleManager.h"
+#include "Commands.h"
 #include "slua_profile_inspector.h"
+#include "Framework/Commands/Commands.h"
 
 #ifdef ENABLE_PROFILER
 #define PROFILER_WATCHER(x)  Profiler x(__FUNCTION__);
@@ -38,18 +41,23 @@ public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 
+	void PluginButtonClicked();
 private:
-	TSharedRef<class SDockTab> OnSpawnPluginTab(const class FSpawnTabArgs& SpawnTabArgs);
-	bool Tick(float DeltaTime);
-	void ClearCurProfiler();
-
+	// fields
 	FTickerDelegate TickDelegate;
 	FDelegateHandle TickDelegateHandle;
 	TSharedPtr<SProfilerInspector> sluaProfilerInspector;
 	int stateIndex = -1;
 	bool tabOpened = false;
+	TSharedPtr<class FUICommandList> PluginCommands;
+
+	// functions
 	void OnTabClosed(TSharedRef<SDockTab> tab);
 	void openHook();
+	TSharedRef<class SDockTab> OnSpawnPluginTab(const class FSpawnTabArgs& SpawnTabArgs);
+	bool Tick(float DeltaTime);
+	void ClearCurProfiler();
+	void AddMenuExtension(FMenuBuilder& Builder);
 };
 
 struct SLUA_PROFILE_API FunctionProfileInfo
@@ -67,6 +75,21 @@ struct SLUA_PROFILE_API FunctionProfileInfo
 	bool isDuplicated = false;
 	TArray<int> mergeIdxArray;
 };
+
+#if WITH_EDITOR
+class Flua_profileCommands : public TCommands<Flua_profileCommands>
+{
+public:
+
+	Flua_profileCommands();
+
+	// TCommands<> interface
+	virtual void RegisterCommands() override;
+
+public:
+	TSharedPtr< FUICommandInfo > OpenPluginWindow;
+};
+#endif
 
 class SLUA_PROFILE_API Profiler
 {

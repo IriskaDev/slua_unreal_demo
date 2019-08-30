@@ -13,10 +13,10 @@
 
 #include "LuaObject.h"
 #include "LuaState.h"
-#include "LuaSocket/luasocket.h"
-#include "LuaSocket/mime.h"
+#include "luasocket/luasocket.h"
+#include "luasocket/mime.h"
 
-namespace slua {
+namespace NS_SLUA {
 
     namespace LuaSocket {
 

@@ -2,6 +2,7 @@ local Common = require ("Common")
 local Dispatcher = require ("Dispatcher")
 local InventoryData = require ("InventoryData")
 local Events = require ("Events")
+local UEnums = require ("UEnums")
 
 local mt = {}
 
@@ -66,7 +67,7 @@ function mt:BePickedup(picker)
 end
 
 function mt:Use()
-	local character = self["MyCharacter"]
+	local character = Common.GetMyCharacter(self)
     Dispatcher.Dispatch(Events.EVT_CHARACTER_HEALTH_VALUE_MODIFY, character["HealthValue"] + self["AddHealth"])
     Dispatcher.Dispatch(Events.EVT_CHARACTER_ENERGY_VALUE_MODIFY, character["EnergyValue"] + self["AddEnergy"])
     Dispatcher.Dispatch(Events.EVT_CHARACTER_MOOD_VALUE_MODIFY, character["MoodValue"] + self["AddMood"])

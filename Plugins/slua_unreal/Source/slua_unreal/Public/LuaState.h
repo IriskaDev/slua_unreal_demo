@@ -18,12 +18,15 @@
 #include "LuaVar.h"
 #include <string>
 #include <memory>
+#include <atomic>
 #include "HAL/Runnable.h"
 
 #define SLUA_LUACODE "[sluacode]"
 #define SLUA_CPPINST "__cppinst"
 
-namespace slua {
+DECLARE_MULTICAST_DELEGATE(FLuaStateInitEvent);
+
+namespace NS_SLUA {
 
 	struct ScriptTimeoutEvent {
 		virtual void onTimeout() = 0;
@@ -35,15 +38,15 @@ namespace slua {
 		FDeadLoopCheck();
 		~FDeadLoopCheck();
 
-		void scriptEnter(ScriptTimeoutEvent* pEvent);
-		void scriptLeave();
+		int scriptEnter(ScriptTimeoutEvent* pEvent);
+		int scriptLeave();
 
 	protected:
 		uint32 Run() override;
 		void Stop() override;
 		void onScriptTimeout();
 	private:
-		ScriptTimeoutEvent* timeoutEvent;
+		std::atomic<ScriptTimeoutEvent*> timeoutEvent;
 		FThreadSafeCounter timeoutCounter;
 		FThreadSafeCounter stopCounter;
 		FThreadSafeCounter frameCounter;
@@ -61,6 +64,8 @@ namespace slua {
 		static void scriptTimeout(lua_State *L, lua_Debug *ar);
 	};
 
+	typedef TMap<UObject*, GenericUserData*> UObjectRefMap;
+
     class SLUA_UNREAL_API LuaState 
 		: public FUObjectArray::FUObjectDeleteListener
 		, public FGCObject
@@ -75,7 +80,8 @@ namespace slua {
          * if find fn and load successful, return buf of file content, otherwise return nullptr
          * you must delete[] buf returned by function for free memory.
          */
-        typedef uint8* (*LoadFileDelegate) (const char* fn, uint32& len, FString& filepath);
+		typedef uint8* (*LoadFileDelegate) (const char* fn, uint32& len, FString& filepath);
+		typedef void (*ErrorDelegate) (const char* err);
 
         inline static LuaState* get(lua_State* l=nullptr) {
             // if L is nullptr, return main state
@@ -97,7 +103,7 @@ namespace slua {
         int stateIndex() const { return si; }
         
         // init lua state
-        virtual bool init();
+        virtual bool init(bool enableMultiThreadGC=false);
         // tick function
         virtual void tick(float dtime);
         // close lua state
@@ -128,6 +134,8 @@ namespace slua {
 
         // set load delegation function to load lua code
 		void setLoadFileDelegate(LoadFileDelegate func);
+		// set error delegation function to handle error
+		void setErrorDelegate(ErrorDelegate func);
 
 		lua_State* getLuaState() const
 		{
@@ -143,26 +151,34 @@ namespace slua {
 		// create named table, support "x.x.x.x", put table to _G
 		LuaVar createTable(const char* key);
 
-		const TSet<UObject*>& cacheSet() const {
+		const UObjectRefMap& cacheSet() const {
 			return objRefs;
 		}
 
 		// add obj to ref, tell Engine don't collect this obj
-		void addRef(UObject* obj);
-		// remove obj from ref
-		void removeRef(UObject* obj);
+		void addRef(UObject* obj,void* ud);
+		// unlink UObject, flag Object had been free, and remove from cache and objRefs
+		void unlinkUObject(const UObject * Object);
 
 		// if obj be deleted, call this function
 		virtual void NotifyUObjectDeleted(const class UObjectBase *Object, int32 Index) override;
+
 		// tell Engine which objs should be referenced
 		virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
-       
         static int pushErrorHandler(lua_State* L);
+
+		// call this function on script error
+		void onError(const char* err);
     protected:
-        LoadFileDelegate loadFileDelegate;
+		LoadFileDelegate loadFileDelegate;
+		ErrorDelegate errorDelegate;
         uint8* loadFile(const char* fn,uint32& len,FString& filepath);
 		static int loader(lua_State* L);
 		static int getStringFromMD5(lua_State* L);
+
+	public:
+		FLuaStateInitEvent onInitEvent;
+
     private:
         friend class LuaObject;
         friend class SluaUtil;
@@ -176,19 +192,41 @@ namespace slua {
 		void linkProp(void* parent, void* prop);
 		void releaseLink(void* prop);
 		void releaseAllLink();
+		// unreal gc will call this funciton
+		void onEngineGC();
+		// on world cleanup
+		void onWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
+
 
 		TMap<void*, TArray<void*>> propLinks;
         int stackCount;
         int si;
         FString stateName;
 
-        TMap<UClass*,TMap<FString,UFunction*>*> classMap;
-
-		TMap<UClass*, int32> classInstanceNums;
+		// cache ufunction ptr if index by lua
+		struct ClassFunctionCache {
+			typedef TMap<FString, TWeakObjectPtr<UFunction>> CacheItem;
+			typedef TMap<TWeakObjectPtr<UClass>, CacheItem> CacheMap;
+			CacheMap cacheMap;
+			UFunction* find(UClass* uclass, const char* fname);
+			void cache(UClass* uclass, const char* fname, UFunction* func);
+			void clear() {
+				cacheMap.Empty();
+			}
+		} classMap;
 
 		FDeadLoopCheck* deadLoopCheck;
 
-		TSet <UObject*> objRefs;
+		// hold UObjects pushed to lua
+		UObjectRefMap objRefs;
+		// hold FGcObject to defer delete
+		TArray<FGCObject*> deferDelete;
+
+
+		FDelegateHandle pgcHandler;
+		FDelegateHandle wcHandler;
+
+		bool enableMultiThreadGC;
 
         static LuaState* mainState;
 

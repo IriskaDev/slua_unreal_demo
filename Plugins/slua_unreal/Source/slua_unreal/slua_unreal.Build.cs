@@ -45,8 +45,9 @@ public class slua_unreal : ModuleRules
                 }
             case UnrealTargetPlatform.Android:
                 {
+                    PublicLibraryPaths.Add(Path.Combine(externalLib, "Android/armeabi-arm64"));
                     PublicLibraryPaths.Add(Path.Combine(externalLib, "Android/armeabi-v7a"));
-                    PublicLibraryPaths.Add(Path.Combine(externalLib, "Android/x86"));
+                    PublicLibraryPaths.Add(Path.Combine(externalLib, "Android/x86")); 
                     PublicAdditionalLibraries.Add("lua");
                     break;
                 }
@@ -67,6 +68,12 @@ public class slua_unreal : ModuleRules
 					// Unreal ignores PublicLibraryPaths on Mac. But why? 
                     // PublicLibraryPaths.Add(Path.Combine(externalLib, "Mac"));
                     PublicAdditionalLibraries.Add(Path.Combine(externalLib, "Mac/liblua.a"));
+                    break;
+                }
+            case UnrealTargetPlatform.Linux:
+                {
+                    PublicLibraryPaths.Add(Path.Combine(externalLib, "Linux"));
+                    PublicAdditionalLibraries.Add("lua");
                     break;
                 }
         }

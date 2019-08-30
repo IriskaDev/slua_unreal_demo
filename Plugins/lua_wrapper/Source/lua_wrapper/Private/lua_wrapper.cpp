@@ -16,7 +16,7 @@
 #ifdef _MSC_VER
 #define WIN32_LEAN_AND_MEAN
 #include "AllowWindowsPlatformTypes.h"
-#include "windows.h"
+#include "Windows.h"
 #include "HideWindowsPlatformTypes.h"
 #else
 #include <iostream>
@@ -130,7 +130,7 @@ void Flua_wrapperModule::PluginButtonClicked()
 {
 	//FGlobalTabmanager::Get()->InvokeTab(lua_wrapperTabName);
 #ifdef _MSC_VER
-	auto contentDir = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*FPaths::GameContentDir());
+	auto contentDir = IFileManager::Get().ConvertToAbsolutePathForExternalAppForRead(*FPaths::ProjectContentDir());
 	auto cmd = contentDir + TEXT("/../Tools/lua-wrapper.exe");
 	system(TCHAR_TO_UTF8(*cmd));
 #else

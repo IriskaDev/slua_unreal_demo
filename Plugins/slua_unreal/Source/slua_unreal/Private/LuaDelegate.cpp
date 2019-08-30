@@ -11,9 +11,9 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
 // See the License for the specific language governing permissions and limitations under the License.
 
-#include "LuaDelegate.h"
 #include "LuaObject.h"
 #include "LuaVar.h"
+#include "LuaDelegate.h"
 
 ULuaDelegate::ULuaDelegate(const FObjectInitializer& ObjectInitializer)
 	: Super(ObjectInitializer)
@@ -36,16 +36,16 @@ void ULuaDelegate::ProcessEvent( UFunction* f, void* Parms ) {
     luafunction->callByUFunction(ufunction,reinterpret_cast<uint8*>(Parms));
 }
 
-void ULuaDelegate::bindFunction(slua::lua_State* L,int p,UFunction* ufunc) {
+void ULuaDelegate::bindFunction(NS_SLUA::lua_State* L,int p,UFunction* ufunc) {
     luaL_checktype(L,p,LUA_TFUNCTION);
     ensure(ufunc);
-    luafunction = new slua::LuaVar(L,p,slua::LuaVar::LV_FUNCTION);
+    luafunction = new NS_SLUA::LuaVar(L,p,NS_SLUA::LuaVar::LV_FUNCTION);
     ufunction = ufunc;
 }
 
-void ULuaDelegate::bindFunction(slua::lua_State* L,int p) {
+void ULuaDelegate::bindFunction(NS_SLUA::lua_State* L,int p) {
     luaL_checktype(L,p,LUA_TFUNCTION);
-    luafunction = new slua::LuaVar(L,p,slua::LuaVar::LV_FUNCTION);
+    luafunction = new NS_SLUA::LuaVar(L,p,NS_SLUA::LuaVar::LV_FUNCTION);
 }
 
 void ULuaDelegate::bindFunction(UFunction *ufunc) {
@@ -58,7 +58,7 @@ void ULuaDelegate::dispose()
 	SafeDelete(luafunction);
 	ufunction = nullptr;
 }
-namespace slua {
+namespace NS_SLUA {
 
     struct LuaMultiDelegateWrap {
         FMulticastScriptDelegate* delegate;
@@ -96,7 +96,7 @@ namespace slua {
         UD->delegate->AddUnique(Delegate);
 
         // add reference
-        LuaObject::addRef(L,obj);
+        LuaObject::addRef(L,obj,nullptr);
 
         lua_pushlightuserdata(L,obj);
         return 1;
@@ -161,9 +161,26 @@ namespace slua {
         return LuaObject::pushType<LuaMultiDelegateWrap*>(L,wrapobj,"LuaMultiDelegateWrap",setupMT,gc);
     }
 
+    void clear(lua_State* L, LuaDelegateWrap* ldw) {
+        auto object = ldw->delegate->GetUObject();
+		if (object)
+		{
+			ULuaDelegate* delegateObj = Cast<ULuaDelegate>(object);
+			if (delegateObj)
+			{
+				delegateObj->dispose();
+				LuaObject::removeRef(L, object);
+			}
+		}
+		ldw->delegate->Clear();
+    }
+
 	int LuaDelegate::Bind(lua_State* L)
 	{
 		CheckUD(LuaDelegateWrap, L, 1);
+
+        // clear old delegate object
+        if(UD) clear(L,UD);
 
 		// bind luafucntion and signature function
 		auto obj = NewObject<ULuaDelegate>((UObject*)GetTransientPackage(), ULuaDelegate::StaticClass());
@@ -175,7 +192,7 @@ namespace slua {
 		UD->delegate->BindUFunction(obj, TEXT("EventTrigger"));
 
 		// add reference
-		LuaObject::addRef(L, obj);
+		LuaObject::addRef(L, obj, nullptr);
 
 		lua_pushlightuserdata(L, obj);
 		return 1;
@@ -184,17 +201,7 @@ namespace slua {
 	int LuaDelegate::Clear(lua_State* L)
 	{
 		CheckUD(LuaDelegateWrap, L, 1);
-		auto object = UD->delegate->GetUObject();
-		if (object)
-		{
-			ULuaDelegate* delegateObj = Cast<ULuaDelegate>(object);
-			if (delegateObj)
-			{
-				delegateObj->dispose();
-				LuaObject::removeRef(L, object);
-			}
-		}
-		UD->delegate->Clear();
+		if(UD) clear(L,UD);
 		return 0;
 	}
 

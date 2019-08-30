@@ -13,13 +13,14 @@
 
 #pragma once
 #include "CoreMinimal.h"
+#include "lua.hpp"
 #include "UObject/UnrealType.h"
 #include "UObject/GCObject.h"
 
-namespace slua {
+namespace NS_SLUA {
 
 	namespace LuaReference{
-		void addRefByStruct(FReferenceCollector& collector, UStruct* us, void* base);
-		bool addRefByProperty(FReferenceCollector& collector, const UProperty* prop, void* ptr);
+		void addRefByStruct(FReferenceCollector& collector, UStruct* us, void* base, bool container=true);
+		bool addRefByProperty(FReferenceCollector& collector, const UProperty* prop, void* ptr, bool container=true);
 	}
 }

@@ -2,6 +2,7 @@ local Common = require("Common")
 local InventoryData = require ("InventoryData")
 local Dispatcher = require ("Dispatcher")
 local Events = require ("Events")
+local UEnums = require ("UEnums")
 local hud = {}
 
 

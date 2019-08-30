@@ -18,6 +18,7 @@
 #include <algorithm>
 #include "LuaState.h"
 #include "LuaReference.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 #define GET_CHECKER(tag) \
 	auto tag##Checker = LuaObject::getChecker(UD->tag##Prop);\
@@ -27,7 +28,7 @@
 		return 0; \
 	}
 
-namespace slua {
+namespace NS_SLUA {
 
 	DefTypeName(LuaMap::Enumerator);
 
@@ -35,8 +36,8 @@ namespace slua {
 		SluaUtil::reg(L, "Map", __ctor);
 	}
 
-	int LuaMap::push(lua_State* L, UProperty* keyProp, UProperty* valueProp, FScriptMap* buf) {
-		auto luaMap = new LuaMap(keyProp, valueProp, buf);
+	int LuaMap::push(lua_State* L, UProperty* keyProp, UProperty* valueProp, const FScriptMap* buf, bool frombp) {
+		auto luaMap = new LuaMap(keyProp, valueProp, buf, frombp);
 		return LuaObject::pushType(L, luaMap, "LuaMap", setupMT, gc);
 	}
 
@@ -63,7 +64,7 @@ namespace slua {
 	}
 
 
-	LuaMap::LuaMap(UProperty* kp, UProperty* vp, FScriptMap* buf) : 
+	LuaMap::LuaMap(UProperty* kp, UProperty* vp, const FScriptMap* buf, bool frombp) : 
 		map( new FScriptMap ),
 		keyProp(kp), 
 		valueProp(vp) ,
@@ -71,14 +72,12 @@ namespace slua {
 		propObj(nullptr),
 		helper(FScriptMapHelper::CreateHelperFormInnerProperties(keyProp, valueProp, map)) 
 	{
-		keyProp->PropertyFlags |= CPF_HasGetValueTypeHash;
 		if (buf) {
 			clone(map,kp,vp,buf);
-			createdByBp = true;
+			createdByBp = frombp;
 		} else {
 			createdByBp = false;
 		}
-		
 	} 
 
 	LuaMap::LuaMap(UMapProperty* p, UObject* obj) : 
@@ -131,8 +130,8 @@ namespace slua {
 				bool keyChanged = false;
 				bool valuesChanged = false;
 
-				keyChanged = LuaReference::addRefByProperty(Collector, keyProp, keyPtr);
-				valuesChanged = LuaReference::addRefByProperty(Collector, valueProp, valuePtr);
+				keyChanged = LuaReference::addRefByProperty(Collector, keyProp, keyPtr, false);
+				valuesChanged = LuaReference::addRefByProperty(Collector, valueProp, valuePtr, false);
 				if(keyChanged) helper.Rehash();
 				
 				index += 1;
@@ -144,7 +143,11 @@ namespace slua {
     }
 
 	uint8* LuaMap::getKeyPtr(uint8* pairPtr) {
+#if (ENGINE_MINOR_VERSION>=22) && (ENGINE_MAJOR_VERSION>=4)
+		return pairPtr;
+#else
 		return pairPtr + helper.MapLayout.KeyOffset;
+#endif
 	}
 
 	uint8* LuaMap::getValuePtr(uint8* pairPtr) {
@@ -242,10 +245,10 @@ namespace slua {
 	}
 
 	int LuaMap::__ctor(lua_State* L) {
-		auto keyType = (UE4CodeGen_Private::EPropertyClass)LuaObject::checkValue<int>(L, 1);
-		auto valueType = (UE4CodeGen_Private::EPropertyClass)LuaObject::checkValue<int>(L, 2);
-		auto keyProp = LuaObject::createProperty(L, keyType);
-		auto valueProp = LuaObject::createProperty(L, valueType);
+		auto keyType = (EPropertyClass)LuaObject::checkValue<int>(L, 1);
+		auto valueType = (EPropertyClass)LuaObject::checkValue<int>(L, 2);
+		auto keyProp = PropertyProto::createProperty(keyType);
+		auto valueProp = PropertyProto::createProperty(valueType);
 		return push(L, keyProp, valueProp, nullptr);
 	}
 
@@ -304,6 +307,8 @@ namespace slua {
 	int LuaMap::Pairs(lua_State* L) {
 		CheckUD(LuaMap, L, 1);
 		auto iter = new LuaMap::Enumerator();
+		// hold LuaMap
+		iter->holder = new LuaVar(L, 1);
 		iter->map = UD;
 		iter->index = 0;
 		iter->num = UD->helper.Num();
@@ -341,9 +346,14 @@ namespace slua {
 		return 0;
 	}
 
+	LuaMap::Enumerator::~Enumerator()
+	{
+		SafeDelete(holder);
+	}
+
 	int LuaMap::gc(lua_State* L) {
 		CheckUD(LuaMap, L, 1);
-		delete UD;
+		LuaObject::deleteFGCObject(L,UD);
 		return 0;
 	}
 

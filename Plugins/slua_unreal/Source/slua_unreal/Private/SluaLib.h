@@ -15,7 +15,7 @@
 #include "CoreMinimal.h"
 #include "lua/lua.hpp"
 
-namespace slua {
+namespace NS_SLUA {
 
     // used for lua interface
     class SluaUtil {
@@ -26,8 +26,12 @@ namespace slua {
         static int loadUI(lua_State* L);
         static int loadClass(lua_State* L);
 		static int createDelegate(lua_State* L);
+		static int loadObject(lua_State* L);
+		static int threadGC(lua_State* L);
 		// dump all uobject that referenced by lua
 		static int dumpUObjects(lua_State* L);
+		// return whether an userdata is valid?
+		static int isValid(lua_State* L);
     };
 
 }

@@ -18,7 +18,7 @@
 #include "LuaState.h"
 #include "LuaReference.h"
 
-namespace slua {
+namespace NS_SLUA {
 
     DefTypeName(LuaArray::Enumerator); 
 
@@ -174,10 +174,12 @@ namespace slua {
 	}
 
     int LuaArray::__ctor(lua_State* L) {
-		auto type = (UE4CodeGen_Private::EPropertyClass) LuaObject::checkValue<int>(L,1);
+		auto type = (EPropertyClass) LuaObject::checkValue<int>(L,1);
 		auto cls = LuaObject::checkValueOpt<UClass*>(L, 2, nullptr);
+        if(type==EPropertyClass::Object && !cls)
+            luaL_error(L,"Array of UObject should have secend parameter is UClass");
 		auto array = FScriptArray();
-		return push(L, LuaObject::createProperty(L, type, cls), &array);
+		return push(L, PropertyProto::createProperty({ type, cls }), &array);
     }
 
     int LuaArray::Num(lua_State* L) {
@@ -275,6 +277,8 @@ namespace slua {
 	int LuaArray::Pairs(lua_State* L) {
 		CheckUD(LuaArray, L, 1);
 		auto iter = new LuaArray::Enumerator();
+		// hold LuaArray
+		iter->holder = new LuaVar(L, 1);
 		iter->arr = UD;
 		iter->index = 0;
 		lua_pushcfunction(L, LuaArray::Enumerable);
@@ -317,7 +321,7 @@ namespace slua {
 
     int LuaArray::gc(lua_State* L) {
         CheckUD(LuaArray,L,1);
-        delete UD;
+		LuaObject::deleteFGCObject(L,UD);
         return 0;   
     }
 
@@ -325,6 +329,11 @@ namespace slua {
 		CheckUD(LuaArray::Enumerator, L, 1);
 		delete UD;
 		return 0;
+	}
+
+	LuaArray::Enumerator::~Enumerator()
+	{
+		SafeDelete(holder);
 	}
 
 }
