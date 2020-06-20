@@ -15,6 +15,7 @@
 #define LUA_LIB
 #include "CoreMinimal.h"
 #include "lua/lua.hpp"
+#include "Misc/CoreMisc.h"
 #include "UObject/UnrealType.h"
 #include "UObject/WeakObjectPtr.h"
 #include "Blueprint/UserWidget.h"
@@ -54,6 +55,8 @@
 	auto self = udptr->ud
 
 #define IsRealOutParam(propflag) ((propflag&CPF_OutParm) && !(propflag&CPF_ConstParm) && !(propflag&CPF_BlueprintReadOnly))
+
+class ULatentDelegate;
 
 namespace NS_SLUA {
 
@@ -99,6 +102,7 @@ namespace NS_SLUA {
 	#define UD_UOBJECT 1<<6 // flag it's an UObject
 	#define UD_USTRUCT 1<<7 // flag it's an UStruct
 	#define UD_WEAKUPTR 1<<8 // flag it's a weak UObject ptr
+	#define UD_REFERENCE 1<<9
 
 	struct UDBase {
 		uint32 flag;
@@ -123,6 +127,9 @@ namespace NS_SLUA {
     struct LuaOwnedPtr {
         T* ptr;
         LuaOwnedPtr(T* p):ptr(p) {}
+		T* operator->() const {
+			return ptr;
+		}
     };
 
 	template<typename T,ESPMode mode>
@@ -171,7 +178,7 @@ namespace NS_SLUA {
     {
     private:
 
-#define CHECK_UD_VALID(ptr) if (ptr && ptr->flag&UD_HADFREE) { \
+		#define CHECK_UD_VALID(ptr) if (ptr && ptr->flag&UD_HADFREE) { \
 		if (checkfree) \
 			luaL_error(L, "arg %d had been freed(%p), can't be used", lua_absindex(L, p), ptr->ud); \
 		else \
@@ -206,7 +213,6 @@ namespace NS_SLUA {
 			if (!t && lua_isuserdata(L, p)) {
 				luaL_getmetafield(L, p, "__name");
 				if (lua_isnil(L, -1)) {
-					lua_pop(L, 1);
 					return t;
 				}
 				FString clsname(lua_tostring(L, -1));
@@ -219,7 +225,10 @@ namespace NS_SLUA {
 			}
 			else if (!t)
 				return maybeAnUDTable<T>(L, p,checkfree);
-            return t;
+
+			// check UObject is valid
+			if (isUObjectValid(t)) return t;
+            return nullptr;
         }
 
         // testudata, if T is uobject
@@ -234,8 +243,9 @@ namespace NS_SLUA {
 				auto wptr = (UserData<WeakUObjectUD*>*)ptr;
 				return wptr->ud->get();
 			}
-			else
-				return ptr?ptr->ud:nullptr;
+			else if (isUObjectValid(ptr->ud) || !checkfree)
+				return ptr->ud;
+			return nullptr;
         }
 
 		template<class T>
@@ -289,13 +299,13 @@ namespace NS_SLUA {
 
     public:
 
-        typedef int (*PushPropertyFunction)(lua_State* L,UProperty* prop,uint8* parms);
-        typedef int (*CheckPropertyFunction)(lua_State* L,UProperty* prop,uint8* parms,int i);
+        typedef int (*PushPropertyFunction)(lua_State* L,FProperty* prop,uint8* parms,bool ref);
+        typedef int (*CheckPropertyFunction)(lua_State* L,FProperty* prop,uint8* parms,int i);
 
-        static CheckPropertyFunction getChecker(UClass* prop);
-        static PushPropertyFunction getPusher(UProperty* prop);
-        static CheckPropertyFunction getChecker(UProperty* cls);
-        static PushPropertyFunction getPusher(UClass* cls);
+        static CheckPropertyFunction getChecker(FFieldClass* prop);
+        static PushPropertyFunction getPusher(FProperty* prop);
+        static CheckPropertyFunction getChecker(FProperty* cls);
+        static PushPropertyFunction getPusher(FFieldClass* cls);
 
 		static bool matchType(lua_State* L, int p, const char* tn, bool noprefix=false);
 
@@ -309,6 +319,15 @@ namespace NS_SLUA {
 		static void addField(lua_State* L, const char* name, lua_CFunction getter, lua_CFunction setter, bool isInstance = true);
 		static void addOperator(lua_State* L, const char* name, lua_CFunction func);
 		static void finishType(lua_State* L, const char* tn, lua_CFunction ctor, lua_CFunction gc, lua_CFunction strHint=nullptr);
+		static void fillParam(lua_State* L, int i, UFunction* func, uint8* params);
+		static int returnValue(lua_State* L, UFunction* func, uint8* params);
+
+		// check UObject is valid
+		static bool isUObjectValid(UObject* obj) {
+			return obj && !obj->IsUnreachable() && !obj->IsPendingKill();
+		}
+		
+		static void callUFunction(lua_State* L, UObject* obj, UFunction* func, uint8* params);
 		// create new enum type to lua, see DefEnum macro
 		template<class T>
 		static void newEnum(lua_State* L, const char* tn, const char* keys, std::initializer_list<T> values) {
@@ -331,10 +350,6 @@ namespace NS_SLUA {
 		}
         static void init(lua_State* L);
 
-
-        
-
-
         // check arg at p is exported lua class named __name in field 
         // of metable of the class, if T is base of class or class is T, 
         // return the pointer of class, otherwise return nullptr
@@ -349,13 +364,14 @@ namespace NS_SLUA {
             if(ret) return ret;
 
             const char *typearg = nullptr;
-            if (luaL_getmetafield(L, p, "__name") == LUA_TSTRING)
+            int tt = luaL_getmetafield(L, p, "__name");
+            if (tt == LUA_TSTRING)
                 typearg = lua_tostring(L, -1);
-                
-            lua_pop(L,1);
+
+            if(tt!=LUA_TNIL) lua_pop(L,1);
 
             if(checkfree && !typearg)
-                luaL_error(L,"expect userdata at %d",p);
+                luaL_error(L,"expect userdata at %d, if you passed an UObject, maybe it's unreachable",p);
 
 			if (LuaObject::isBaseTypeOf(L, typearg, TypeName<T>::value().c_str())) {
 				UserData<T*> *udptr = reinterpret_cast<UserData<T*>*>(lua_touserdata(L, p));
@@ -363,7 +379,7 @@ namespace NS_SLUA {
 				return udptr->ud;
 			}
             if(checkfree) 
-				luaL_error(L,"expect userdata %s, but got %s",TypeName<T>::value().c_str(),typearg);
+				luaL_error(L,"expect userdata %s, but got %s, if you passed an UObject, maybe it's unreachable",TypeName<T>::value().c_str(),typearg);
             return nullptr;
         }
 
@@ -460,13 +476,6 @@ namespace NS_SLUA {
 			using ValueType = typename TPairTraits<typename T::ElementType>::ValueType;
 			return UD->asTMap<KeyType, ValueType>(L);
 		}
-
-        template<class T>
-        static UObject* checkUObject(lua_State* L,int p) {
-            UserData<UObject*>* ud = reinterpret_cast<UserData<UObject*>*>(luaL_checkudata(L, p,"UObject"));
-            if(!ud) luaL_error(L, "checkValue error at %d",p);
-            return Cast<T>(ud->ud);
-        }
 
         template<typename T>
         static void* void_cast( const T* v ) {
@@ -596,18 +605,18 @@ namespace NS_SLUA {
 			return pushSharedType<BOXPUD, mode,F>(L, cls, tn, UD_SHAREDREF);
 		}
 
-		static void addRef(lua_State* L,UObject* obj, void* ud);
+        static void addRef(lua_State* L,UObject* obj, void* ud, bool ref);
         static void removeRef(lua_State* L,UObject* obj);
 
         template<typename T>
-        static int pushGCObject(lua_State* L,T obj,const char* tn,lua_CFunction setupmt,lua_CFunction gc) {
+        static int pushGCObject(lua_State* L,T obj,const char* tn,lua_CFunction setupmt,lua_CFunction gc,bool ref) {
             if(getFromCache(L,obj,tn)) return 1;
             lua_pushcclosure(L,gc,0);
             int f = lua_gettop(L);
             int r = pushType<T>(L,obj,tn,setupmt,f);
             lua_remove(L,f); // remove wraped gc function
 			if (r) {
-				addRef(L, obj , lua_touserdata(L,-1));
+				addRef(L, obj, lua_touserdata(L, -1), ref);
 				cacheObj(L, obj);
 			}
             return r;
@@ -626,7 +635,7 @@ namespace NS_SLUA {
         static int pushClass(lua_State* L,UClass* cls);
         static int pushStruct(lua_State* L,UScriptStruct* cls);
 		static int pushEnum(lua_State* L, UEnum* e);
-		static int push(lua_State* L, UObject* obj, bool rawpush=false);
+		static int push(lua_State* L, UObject* obj, bool rawpush=false, bool ref=true);
 		inline static int push(lua_State* L, const UObject* obj) {
 			return push(L, const_cast<UObject*>(obj));
 		}
@@ -651,9 +660,9 @@ namespace NS_SLUA {
 		static int push(lua_State* L, const char* str);
 		static int push(lua_State* L, const LuaVar& v);
         static int push(lua_State* L, UFunction* func, UClass* cls=nullptr);
-		static int push(lua_State* L, UProperty* up, uint8* parms);
-		static int push(lua_State* L, UProperty* up, UObject* obj);
 		static int push(lua_State* L, const LuaLString& lstr);
+		static int push(lua_State* L, FProperty* up, uint8* parms, bool ref=true);
+		static int push(lua_State* L, FProperty* up, UObject* obj, bool ref=true);
 
         // check tn is base of base
         static bool isBaseTypeOf(lua_State* L,const char* tn,const char* base);
@@ -663,6 +672,13 @@ namespace NS_SLUA {
             return push(L, TypeName<T>::value().c_str(), ptr);
         }
 
+		// it's an override for non-uobject, non-ptr, only accept struct or class value
+		template<typename T>
+		static int push(lua_State* L, const T& v, typename std::enable_if<!std::is_base_of<UObject, T>::value && std::is_class<T>::value>::type* = nullptr) {
+			T* newPtr = new T(v);
+			return push<T>(L, TypeName<T>::value().c_str(), newPtr, UD_AUTOGC);
+		}
+
 		// if T has a member function named LUA_typename,
 		// used this branch
 		template<typename T>
@@ -670,10 +686,15 @@ namespace NS_SLUA {
 			return push(L, ptr->LUA_typename().c_str(), ptr);
 		}
 
-        template<typename T>
-        static int push(lua_State* L,LuaOwnedPtr<T> ptr) {
-            return push(L,TypeName<T>::value().c_str(),ptr.ptr,UD_AUTOGC);
-        }
+		template<typename T>
+		static int push(lua_State* L, LuaOwnedPtr<T> ptr, typename std::enable_if<!std::is_base_of<UObject, T>::value && Has_LUA_typename<T>::value>::type* = nullptr) {
+			return push(L, ptr->LUA_typename().c_str(), ptr.ptr, UD_AUTOGC);
+		}
+
+		template<typename T>
+		static int push(lua_State* L, LuaOwnedPtr<T> ptr, typename std::enable_if<!std::is_base_of<UObject, T>::value && !Has_LUA_typename<T>::value>::type* = nullptr) {
+			return push(L, TypeName<T>::value().c_str(), ptr.ptr, UD_AUTOGC);
+		}
 
 		static int gcSharedPtr(lua_State *L) {
 			return 0;
@@ -736,9 +757,13 @@ namespace NS_SLUA {
         static UFunction* findCacheFunction(lua_State* L,UClass* cls,const char* fname);
         static void cacheFunction(lua_State* L, UClass* cls,const char* fame,UFunction* func);
 
+        static FProperty* findCacheProperty(lua_State* L, UClass* cls, const char* pname);
+        static void cacheProperty(lua_State* L, UClass* cls, const char* pname, FProperty* property);
+
         static bool getFromCache(lua_State* L, void* obj, const char* tn, bool check = true);
 		static void cacheObj(lua_State* L, void* obj);
 		static void removeFromCache(lua_State* L, void* obj);
+		static ULatentDelegate* getLatentDelegate(lua_State* L);
 		static void deleteFGCObject(lua_State* L,FGCObject* obj);
     private:
         static int setupClassMT(lua_State* L);
@@ -754,6 +779,7 @@ namespace NS_SLUA {
         static void setupMetaTable(lua_State* L,const char* tn,lua_CFunction setupmt,lua_CFunction gc);
 		static void setupMetaTable(lua_State* L, const char* tn, lua_CFunction setupmt, int gc);
 		static void setupMetaTable(lua_State* L, const char* tn, lua_CFunction gc);
+		static void callRpc(lua_State* L, UObject* obj, UFunction* func, uint8* params);
 
         template<class T, bool F = IsUObject<T>::value>
         static int pushType(lua_State* L,T cls,const char* tn,lua_CFunction setupmt,int gc) {

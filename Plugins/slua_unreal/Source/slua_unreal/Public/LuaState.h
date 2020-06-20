@@ -20,11 +20,15 @@
 #include <memory>
 #include <atomic>
 #include "HAL/Runnable.h"
+#include "Tickable.h"
+#include "UObject/WeakFieldPtr.h"
 
 #define SLUA_LUACODE "[sluacode]"
 #define SLUA_CPPINST "__cppinst"
 
 DECLARE_MULTICAST_DELEGATE(FLuaStateInitEvent);
+
+class ULatentDelegate;
 
 namespace NS_SLUA {
 
@@ -69,9 +73,10 @@ namespace NS_SLUA {
     class SLUA_UNREAL_API LuaState 
 		: public FUObjectArray::FUObjectDeleteListener
 		, public FGCObject
+		, public FTickableGameObject
     {
     public:
-        LuaState(const char* name=nullptr);
+        LuaState(const char* name=nullptr,UGameInstance* pGI=nullptr);
         virtual ~LuaState();
 
         /*
@@ -90,6 +95,9 @@ namespace NS_SLUA {
         }
         // get LuaState from state index
         static LuaState* get(int index);
+		// get LuaState from UGameInstance, you should create LuaState with an UGameInstance pointer at first
+		// if multi LuaState have same UGameInstance, we will return first one
+		static LuaState* get(UGameInstance* pGI);
 
         // get LuaState from name
         static LuaState* get(const FString& name);
@@ -104,8 +112,10 @@ namespace NS_SLUA {
         
         // init lua state
         virtual bool init(bool enableMultiThreadGC=false);
-        // tick function
-        virtual void tick(float dtime);
+		// attach this luaState to UGameInstance
+		// this function just store UGameInstance pointer for search future
+		void attach(UGameInstance* pGI);
+        
         // close lua state
         virtual void close();
 
@@ -154,9 +164,11 @@ namespace NS_SLUA {
 		const UObjectRefMap& cacheSet() const {
 			return objRefs;
 		}
+        
+		void setTickFunction(LuaVar func);
 
 		// add obj to ref, tell Engine don't collect this obj
-		void addRef(UObject* obj,void* ud);
+		void addRef(UObject* obj,void* ud,bool ref);
 		// unlink UObject, flag Object had been free, and remove from cache and objRefs
 		void unlinkUObject(const UObject * Object);
 
@@ -166,6 +178,22 @@ namespace NS_SLUA {
 		// tell Engine which objs should be referenced
 		virtual void AddReferencedObjects(FReferenceCollector& Collector) override;
         static int pushErrorHandler(lua_State* L);
+#if (ENGINE_MINOR_VERSION>=23) && (ENGINE_MAJOR_VERSION>=4)
+		virtual void OnUObjectArrayShutdown() override;
+#endif
+
+		// tickable object methods
+		virtual void Tick(float DeltaTime) override;
+		virtual TStatId GetStatId() const override;
+#if !((ENGINE_MINOR_VERSION>18) && (ENGINE_MAJOR_VERSION>=4))
+		virtual bool IsTickable() const override { return true; }
+#endif
+
+		int addThread(lua_State *thread);
+		void resumeThread(int threadRef);
+		int findThread(lua_State *thread);
+		void cleanupThreads();
+		ULatentDelegate* getLatentDelegate() const;
 
 		// call this function on script error
 		void onError(const char* err);
@@ -196,6 +224,7 @@ namespace NS_SLUA {
 		void onEngineGC();
 		// on world cleanup
 		void onWorldCleanup(UWorld* World, bool bSessionEnded, bool bCleanupResources);
+		void freeDeferObject();
 
 
 		TMap<void*, TArray<void*>> propLinks;
@@ -203,16 +232,25 @@ namespace NS_SLUA {
         int si;
         FString stateName;
 
-		// cache ufunction ptr if index by lua
-		struct ClassFunctionCache {
-			typedef TMap<FString, TWeakObjectPtr<UFunction>> CacheItem;
-			typedef TMap<TWeakObjectPtr<UClass>, CacheItem> CacheMap;
-			CacheMap cacheMap;
-			UFunction* find(UClass* uclass, const char* fname);
-			void cache(UClass* uclass, const char* fname, UFunction* func);
+		// cache ufunction/uproperty ptr if index by lua
+		struct ClassCache {
+			typedef TMap<FString, TWeakObjectPtr<UFunction>> CacheFuncItem;
+			typedef TMap<TWeakObjectPtr<UClass>, CacheFuncItem> CacheFuncMap;
+
+			typedef TMap<FString, TWeakFieldPtr<FProperty>> CachePropItem;
+			typedef TMap<TWeakObjectPtr<UClass>, CachePropItem> CachePropMap;
+			
+			UFunction* findFunc(UClass* uclass, const char* fname);
+			FProperty* findProp(UClass* uclass, const char* pname);
+			void cacheFunc(UClass* uclass, const char* fname, UFunction* func);
+			void cacheProp(UClass* uclass, const char* pname, FProperty* prop);
 			void clear() {
-				cacheMap.Empty();
+				cacheFuncMap.Empty();
+				cachePropMap.Empty();
 			}
+
+			CacheFuncMap cacheFuncMap;
+			CachePropMap cachePropMap;
 		} classMap;
 
 		FDeadLoopCheck* deadLoopCheck;
@@ -221,12 +259,16 @@ namespace NS_SLUA {
 		UObjectRefMap objRefs;
 		// hold FGcObject to defer delete
 		TArray<FGCObject*> deferDelete;
+		// store UGameInstance ptr to search LuaState
+		// we don't hold referrence
+		UGameInstance* pGI;
 
 
 		FDelegateHandle pgcHandler;
 		FDelegateHandle wcHandler;
 
 		bool enableMultiThreadGC;
+		LuaVar stateTickFunc;
 
         static LuaState* mainState;
 
@@ -234,5 +276,10 @@ namespace NS_SLUA {
         // used for debug
 		TMap<FString, FString> debugStringMap;
         #endif
+
+		TMap<lua_State*, int> threadToRef;                                // coroutine -> ref
+		TMap<int, lua_State*> refToThread;                                // coroutine -> ref
+		ULatentDelegate* latentDelegate;
+
     };
 }

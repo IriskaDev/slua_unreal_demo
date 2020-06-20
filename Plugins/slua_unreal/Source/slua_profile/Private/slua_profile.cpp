@@ -23,60 +23,25 @@
 #include "EditorStyle.h"
 #endif
 
+#include "slua_remote_profile.h"
+#include "SluaUtil.h"
+#include "LuaProfiler.h"
+
+DEFINE_LOG_CATEGORY(LogSluaProfile)
 #define LOCTEXT_NAMESPACE "Fslua_profileModule"
 
 namespace {
 	static const FName slua_profileTabName(TEXT("slua_profile"));
+
+
+	static const FString CoroutineName(TEXT("coroutine"));
 	SluaProfiler curProfiler;
-	TArray<SluaProfiler> curProfilersArray;
+	
+    TArray<NS_SLUA::LuaMemInfo> memoryInfo;
+	TSharedPtr<TArray<SluaProfiler>, ESPMode::ThreadSafe> curProfilersArray = MakeShareable(new TArray<SluaProfiler>());
+	TQueue<TSharedPtr<TArray<SluaProfiler>, ESPMode::ThreadSafe>, EQueueMode::Mpsc> profilerArrayQueue;
+
 	uint32_t currentLayer = 0;
-	uint32_t profilerThreadId = 0;
-
-
-	enum slua_profiler_hook_event
-	{
-		CALL = 0,
-		RETURN = 1,
-		LINE = 2,
-		TAILRET = 4
-	};
-
-	static void debug_hook_c(NS_SLUA::lua_State *L, NS_SLUA::lua_Debug *ar)
-	{
-		if (ar->event == slua_profiler_hook_event::CALL)
-		{
-			if (lua_getinfo(L, "nSl", ar) != 0)
-			{
-				if (ar->linedefined == -1 && ar->name == nullptr)
-				{
-					return;
-				}
-				FString functionName = ar->short_src;
-				functionName += ":";
-				functionName += FString::FromInt(ar->linedefined);
-				functionName += " ";
-				functionName += ar->name;
-				PROFILER_BEGIN_WATCHER_WITH_FUNC_NAME(functionName)
-			}
-		}
-		else if (ar->event == slua_profiler_hook_event::RETURN)
-		{
-			if (lua_getinfo(L, "nSl", ar) != 0)
-			{
-				if (ar->linedefined == -1 && ar->name == nullptr)
-				{
-					return;
-				}
-				FString functionName = ar->short_src;
-				functionName += ":";
-				functionName += FString::FromInt(ar->linedefined);
-				functionName += " ";
-				functionName += ar->name;
-				PROFILER_END_WATCHER()
-			}
-		}
-	}
-
 }
 
 void Fslua_profileModule::StartupModule()
@@ -103,7 +68,6 @@ void Fslua_profileModule::StartupModule()
 
 	if (GIsEditor && !IsRunningCommandlet())
 	{
-		InitProfilerWatchThread();
 		sluaProfilerInspector = MakeShareable(new SProfilerInspector);
 		FGlobalTabmanager::Get()->RegisterNomadTabSpawner(slua_profileTabName,
 			FOnSpawnTab::CreateRaw(this, &Fslua_profileModule::OnSpawnPluginTab))
@@ -121,13 +85,6 @@ void Fslua_profileModule::ShutdownModule()
 	sluaProfilerInspector = nullptr;
 	ClearCurProfiler();
 
-	NS_SLUA::LuaState *state = NS_SLUA::LuaState::get();
-	if (state != nullptr)
-	{
-		NS_SLUA::lua_sethook(state->getLuaState(), NULL, 0, 0);
-		stateIndex = -1;
-	}
-
 	Flua_profileCommands::Unregister();
 
 	FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(slua_profileTabName);
@@ -143,13 +100,16 @@ bool Fslua_profileModule::Tick(float DeltaTime)
 {
 	if (!tabOpened)
 	{
-		ClearCurProfiler();
 		return true;
-	}		
-	
-	openHook();
-	sluaProfilerInspector->Refresh(curProfilersArray);
-	ClearCurProfiler();
+	}
+
+	while (!profilerArrayQueue.IsEmpty())
+	{
+		TSharedPtr<TArray<SluaProfiler>, ESPMode::ThreadSafe> profilesArray;
+		profilerArrayQueue.Dequeue(profilesArray);
+		sluaProfilerInspector->Refresh(*profilesArray.Get(), memoryInfo);
+	}
+
 	return true;
 }
 
@@ -159,10 +119,14 @@ TSharedRef<class SDockTab> Fslua_profileModule::OnSpawnPluginTab(const FSpawnTab
 	{
 		sluaProfilerInspector->StartChartRolling();
 		auto tab = sluaProfilerInspector->GetSDockTab();
-
-		openHook();
-
+		 
 		tab->SetOnTabClosed(SDockTab::FOnTabClosedCallback::CreateRaw(this, &Fslua_profileModule::OnTabClosed));
+
+        sluaProfilerInspector->ProfileServer = MakeShareable(new slua::FProfileServer());
+		sluaProfilerInspector->ProfileServer->OnProfileMessageRecv().BindLambda([this](slua::FProfileMessagePtr Message) {
+			this->debug_hook_c(Message->Event, Message->Time, Message->Linedefined, Message->Name, Message->ShortSrc,  Message->memoryInfoList);
+		});
+        
 		tabOpened = true;
 		return tab;
 	}
@@ -188,32 +152,12 @@ void Flua_profileCommands::RegisterCommands()
 #endif
 /////////////////////////////////////////////////////////////////////////////////////
 
-bool isWatchThread()
-{	
-	uint32_t pid = FPlatformTLS::GetCurrentThreadId();
-	if (profilerThreadId == 0)
-	{
-		profilerThreadId = pid;
-		return true;
-	}
-	else if (pid != profilerThreadId)
-	{
-		return false;
-	}
-	return true;
-}
-
-void Profiler::BeginWatch(FString funcName)
+void Profiler::BeginWatch(const FString& funcName, double nanoseconds)
 {
-	if (isWatchThread() != true)
-	{
-		return;
-	}
-
 	TSharedPtr<FunctionProfileInfo> funcInfo = MakeShareable(new FunctionProfileInfo);
 	funcInfo->functionName = funcName;
 	FDateTime Time = FDateTime::Now();
-	funcInfo->begTime = Time.GetTicks()/ ETimespan::NanosecondsPerTick;
+	funcInfo->begTime = nanoseconds;
 	funcInfo->endTime = -1;
 	funcInfo->costTime = 0;
 	funcInfo->layerIdx = currentLayer;
@@ -223,9 +167,9 @@ void Profiler::BeginWatch(FString funcName)
 	currentLayer++;
 }
 
-void Profiler::EndWatch()
+void Profiler::EndWatch(double nanoseconds)
 {
-	if (isWatchThread() != true || currentLayer <= 0)
+	if (currentLayer <= 0)
 	{
 		return;
 	}
@@ -237,19 +181,23 @@ void Profiler::EndWatch()
 		TSharedPtr<FunctionProfileInfo> &funcInfo = curProfiler[idx - 1];
 		if (funcInfo->endTime == -1)
 		{
-			FDateTime Time = FDateTime::Now();
-			funcInfo->endTime = Time.GetTicks() / ETimespan::NanosecondsPerTick;
+			funcInfo->endTime = nanoseconds;
 			funcInfo->costTime = funcInfo->endTime - funcInfo->begTime;
 			funcInfo->mergedCostTime = funcInfo->costTime;
 			break;
 		}
+	}
+	
+	if (idx <= 0)
+	{
+		return;
 	}
 
 	// check wether node has child
 	TSharedPtr<FunctionProfileInfo> &funcInfo = curProfiler[idx - 1];
 	int64_t childCostTime = 0;
 	bool hasChild = false;
-	for (; idx < curProfiler.Num(); idx++)
+	for (; idx < (size_t)curProfiler.Num(); idx++)
 	{
 		TSharedPtr<FunctionProfileInfo> &nextFuncInfo = curProfiler[idx];
 		if (nextFuncInfo->layerIdx <= funcInfo->layerIdx)
@@ -279,25 +227,16 @@ void Profiler::EndWatch()
 	currentLayer--;
 	if (currentLayer == 0)
 	{
-		curProfilersArray.Add(curProfiler);
+		curProfilersArray->Add(curProfiler);
 		curProfiler.Empty();
 	}
 }
 
 void Fslua_profileModule::ClearCurProfiler()
 {
-	if (sluaProfilerInspector.IsValid() && sluaProfilerInspector->GetNeedProfilerCleared())
-	{
-		curProfiler.Empty();
-		currentLayer = 0;
-		sluaProfilerInspector->SetNeedProfilerCleared(false);
-	}
+	currentLayer = 0;
 
-	for (auto &iter : curProfilersArray)
-	{
-		iter.Empty();
-	}
-	curProfilersArray.Empty();
+	curProfilersArray = MakeShareable(new TArray<SluaProfiler>());
 }
 
 void Fslua_profileModule::AddMenuExtension(FMenuBuilder & Builder)
@@ -309,28 +248,52 @@ void Fslua_profileModule::AddMenuExtension(FMenuBuilder & Builder)
 
 void Fslua_profileModule::OnTabClosed(TSharedRef<SDockTab>)
 {
-	// disable lua hook
-	NS_SLUA::LuaState *state = NS_SLUA::LuaState::get();
-	if (state != nullptr)
-		NS_SLUA::lua_sethook(state->getLuaState(), nullptr, 0, 0);
-	stateIndex = -1;
+//    if (sluaProfilerInspector->ProfileServer)
+//    {
+//        delete sluaProfilerInspector->ProfileServer;
+//        sluaProfilerInspector->ProfileServer = nullptr;
+//    }
 	tabOpened = false;
 }
 
-void Fslua_profileModule::openHook()
+void Fslua_profileModule::debug_hook_c(int event, double nanoseconds, int linedefined, const FString& name, const FString& short_src, TArray<NS_SLUA::LuaMemInfo> memoryInfoList)
 {
-	// enable lua hook
-	NS_SLUA::LuaState *state = NS_SLUA::LuaState::get();
-	if (state) {
-		if (stateIndex == state->stateIndex()) return;
-		NS_SLUA::lua_sethook(state->getLuaState(), debug_hook_c, LUA_MASKCALL | LUA_MASKRET, 0);
-		stateIndex = state->stateIndex();
+	if (event == NS_SLUA::ProfilerHookEvent::PHE_CALL)
+	{
+		if (linedefined == -1 && name.IsEmpty())
+		{
+			return;
+		}
+		FString functionName = short_src;
+		functionName += ":";
+		functionName += FString::FromInt(linedefined);
+		functionName += " ";
+		functionName += name;
+		PROFILER_BEGIN_WATCHER_WITH_FUNC_NAME(functionName, nanoseconds)
 	}
-}
+	else if (event == NS_SLUA::ProfilerHookEvent::PHE_RETURN)
+	{
+		if (linedefined == -1 && name.IsEmpty())
+		{
+			return;
+		}
+		FString functionName = short_src;
+		functionName += ":";
+		functionName += FString::FromInt(linedefined);
+		functionName += " ";
+		functionName += name;
+		PROFILER_END_WATCHER(functionName, nanoseconds)
+	}
+	else if (event == NS_SLUA::ProfilerHookEvent::PHE_TICK)
+	{
+		profilerArrayQueue.Enqueue(curProfilersArray);
 
-void InitProfilerWatchThread()
-{
-	profilerThreadId = FPlatformTLS::GetCurrentThreadId();
+		ClearCurProfiler();
+	}
+    else if (event == NS_SLUA::ProfilerHookEvent::PHE_MEMORY_TICK)
+    {
+        memoryInfo = memoryInfoList;
+    }
 }
 
 #undef LOCTEXT_NAMESPACE

@@ -11,25 +11,35 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. 
 // See the License for the specific language governing permissions and limitations under the License.
 
-#pragma once
-#include "LuaObject.h"
-#include "Margin.h"
-#include "SlateColor.h"
-#include "SlateBrush.h"
-#include "SlateFontInfo.h"
-#include "Log.h"
+#include "LatentDelegate.h"
+#include "LuaState.h"
 
-#define LUA_WRAPPER_DEBUG
+const FString ULatentDelegate::NAME_LatentCallback = TEXT("OnLatentCallback");
 
-namespace NS_SLUA {
-
-	struct LuaWrapper {
-
-		static void init(lua_State* L);
-		static int pushValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms);
-		static int checkValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms, int i);
-
-	};
-
+ULatentDelegate::ULatentDelegate(const FObjectInitializer& ObjectInitializer)
+	: Super(ObjectInitializer)
+	, luaState(nullptr)
+{
 }
 
+void ULatentDelegate::OnLatentCallback(int32 threadRef)
+{
+	luaState->resumeThread(threadRef);
+}
+
+void ULatentDelegate::bindLuaState(NS_SLUA::LuaState *_luaState)
+{
+	luaState = _luaState;
+}
+
+int ULatentDelegate::getThreadRef(NS_SLUA::lua_State *L)
+{
+	ensure(L);
+
+	int threadRef = luaState->findThread(L);
+	if (threadRef == LUA_REFNIL)
+	{
+		threadRef = luaState->addThread(L);
+	}
+	return threadRef;
+}

@@ -12,24 +12,39 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #pragma once
-#include "LuaObject.h"
-#include "Margin.h"
-#include "SlateColor.h"
-#include "SlateBrush.h"
-#include "SlateFontInfo.h"
-#include "Log.h"
-
-#define LUA_WRAPPER_DEBUG
+#include "CoreMinimal.h"
+#include "lua/lua.hpp"
 
 namespace NS_SLUA {
-
-	struct LuaWrapper {
-
-		static void init(lua_State* L);
-		static int pushValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms);
-		static int checkValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms, int i);
-
+    
+	enum ProfilerHookEvent
+	{
+        PHE_MEMORY_TICK = -2,
+		PHE_TICK = -1,
+		PHE_CALL = 0,
+		PHE_RETURN = 1,
+		PHE_LINE = 2,
+		PHE_TAILRET = 4,
+        PHE_MEMORY_GC = 5
 	};
 
-}
+	class SLUA_UNREAL_API LuaProfiler
+	{
+	public:
+		LuaProfiler(const char* funcName);
+		~LuaProfiler();
+		
+		static void init(lua_State* L);
+		static void tick(lua_State* L);
+	};
 
+#ifdef ENABLE_PROFILER
+	// for native function
+#define PROFILER_WATCHER(x)  NS_SLUA::LuaProfiler x(__FUNCTION__);
+#define PROFILER_WATCHER_X(x,name)  NS_SLUA::LuaProfiler x(name);
+#else
+#define PROFILER_WATCHER(x) 
+#define PROFILER_WATCHER_X(x,name)
+#endif
+
+}

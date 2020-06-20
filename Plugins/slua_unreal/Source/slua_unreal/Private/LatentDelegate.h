@@ -12,24 +12,27 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #pragma once
-#include "LuaObject.h"
-#include "Margin.h"
-#include "SlateColor.h"
-#include "SlateBrush.h"
-#include "SlateFontInfo.h"
-#include "Log.h"
 
-#define LUA_WRAPPER_DEBUG
+#include "CoreMinimal.h"
+#include "lua.h"
+#include "LatentDelegate.generated.h"
 
 namespace NS_SLUA {
-
-	struct LuaWrapper {
-
-		static void init(lua_State* L);
-		static int pushValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms);
-		static int checkValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms, int i);
-
-	};
-
+	class LuaState;
 }
 
+UCLASS()
+class SLUA_UNREAL_API ULatentDelegate : public UObject {
+	GENERATED_UCLASS_BODY()
+public:
+	static const FString NAME_LatentCallback;
+
+	UFUNCTION(BlueprintCallable, Category = "Lua|LatentDelegate")
+	void OnLatentCallback(int32 threadRef);
+	
+	void bindLuaState(NS_SLUA::LuaState *_luaState);
+	int getThreadRef(NS_SLUA::lua_State *L);
+
+protected:
+	NS_SLUA::LuaState* luaState;
+};

@@ -25,7 +25,9 @@ class SLUA_UNREAL_API ULuaUserWidget : public UUserWidget, public slua_Luabase, 
     GENERATED_BODY()
 
 protected:
+#if (ENGINE_MINOR_VERSION>20) && (ENGINE_MAJOR_VERSION>=4)
 	virtual void NativeOnInitialized() override;
+#endif
 	virtual void NativeConstruct() override;
 	virtual void NativeDestruct() override;
 	virtual void NativeTick(const FGeometry& MyGeometry, float InDeltaTime) override;
@@ -42,7 +44,9 @@ public:
 	}
 
 	virtual void ProcessEvent(UFunction* func, void* params) override;
+	void superTick(NS_SLUA::lua_State* L) override;
 	void superTick() override;
+	void tick(float dt) override;
 
 	virtual NS_SLUA::LuaVar getSelfTable() const {
 		return luaSelfTable;

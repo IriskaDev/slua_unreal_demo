@@ -28,14 +28,19 @@ static uint8* ReadFile(IPlatformFile& PlatformFile, FString path, uint32& len)
 }
 
 MyLuaStateMgr::MyLuaStateMgr()
-	: _state("mystate"), _initialized(false)
+	: _initialized(false)
 {
 
 }
 
 MyLuaStateMgr::~MyLuaStateMgr()
 {
-	_state.close();
+	if (_state)
+	{
+		_state->close();
+		delete _state;
+		_state = nullptr;
+	}
 	_initialized = false;
 }
 
@@ -52,12 +57,20 @@ int MyLuaStateMgr::Init(UMyGameInstance* instance)
 	if (_initialized)
 		return 0;
 
-	bool initok = _state.init();
+	if (_state)
+	{
+		_state->close();
+		delete _state;
+		_state = nullptr;
+	}
+	_state = new NS_SLUA::LuaState("mystate", instance);
+
+	bool initok = _state->init();
 	if (!initok)
 	{
 		return 1;
 	}
-	_state.setLoadFileDelegate([](const char* fn, uint32& len, FString& filepath) -> uint8* {
+	_state->setLoadFileDelegate([](const char* fn, uint32& len, FString& filepath) -> uint8* {
 		IPlatformFile & platformFile = FPlatformFileManager::Get().GetPlatformFile();
 		FString path = FPaths::ProjectContentDir();
 		path += "/Lua/";
@@ -77,7 +90,7 @@ int MyLuaStateMgr::Init(UMyGameInstance* instance)
 		return nullptr;
 	});
 
-	CppInterface::OpenLib(_state);
+	CppInterface::OpenLib(*_state);
 
 	_initialized = true;
 	return 0;
@@ -87,7 +100,7 @@ int MyLuaStateMgr::Close()
 {
 	if (!_initialized)
 		return 1;
-	_state.close();
+	_state->close();
 	_initialized = false;
 	ClearAllTimers();
 	return 0;

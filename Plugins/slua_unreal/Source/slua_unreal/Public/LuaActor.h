@@ -180,8 +180,9 @@ class SLUA_UNREAL_API ULuaActorComponent : public UActorComponent, public slua_L
 	};
 protected:
 	virtual void BeginPlay() override {
-		if (!init(this, "LuaActorComponent", LuaStateName, LuaFilePath)) return;
 		Super::BeginPlay();
+		if (!init(this, "LuaActorComponent", LuaStateName, LuaFilePath)) 
+			return;
 		if (!GetClass()->HasAnyClassFlags(CLASS_CompiledFromBlueprint))
 			ReceiveBeginPlay();
 		PrimaryComponentTick.SetTickFunctionEnable(postInit("bCanEverTick"));
@@ -200,8 +201,6 @@ protected:
 			return;
 		}
 		tickFunction.call(luaSelfTable, DeltaTime);
-		// try lua gc
-		lua_gc(tickFunction.getState(), LUA_GCSTEP, 128);
 	}
 public:
 	virtual void ProcessEvent(UFunction* func, void* params) override {

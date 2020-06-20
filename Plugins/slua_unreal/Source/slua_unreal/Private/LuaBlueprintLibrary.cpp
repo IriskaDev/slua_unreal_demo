@@ -44,12 +44,15 @@ ULuaBlueprintLibrary::ULuaBlueprintLibrary(const FObjectInitializer& ObjectIniti
 			LOCTEXT("GetVarTypeErrorWarning", "BpVar is not speicified type")
 		)
 	);
+
 }
 
-FLuaBPVar ULuaBlueprintLibrary::CallToLuaWithArgs(FString funcname,const TArray<FLuaBPVar>& args,FString StateName) {
+FLuaBPVar ULuaBlueprintLibrary::CallToLuaWithArgs(UObject* WorldContextObject, FString funcname,const TArray<FLuaBPVar>& args,FString StateName) {
     using namespace NS_SLUA;
     // get main state
-    auto ls = LuaState::get();
+	auto actor = Cast<AActor>(WorldContextObject);
+	ensure(actor);
+    auto ls = LuaState::get(actor->GetGameInstance());
     if(StateName.Len()!=0) ls = LuaState::get(StateName);
     if(!ls) return FLuaBPVar();
     LuaVar f = ls->get(TCHAR_TO_UTF8(*funcname));
@@ -64,10 +67,12 @@ FLuaBPVar ULuaBlueprintLibrary::CallToLuaWithArgs(FString funcname,const TArray<
     return f.callWithNArg(args.Num());
 }
 
-FLuaBPVar ULuaBlueprintLibrary::CallToLua(FString funcname,FString StateName) {
+FLuaBPVar ULuaBlueprintLibrary::CallToLua(UObject* WorldContextObject, FString funcname,FString StateName) {
     using namespace NS_SLUA;
     // get main state
-    auto ls = LuaState::get();
+	auto actor = Cast<AActor>(WorldContextObject);
+	ensure(actor);
+	auto ls = LuaState::get(actor->GetGameInstance());
     if(StateName.Len()!=0) ls = LuaState::get(StateName);
     if(!ls) return FLuaBPVar();
     LuaVar f = ls->get(TCHAR_TO_UTF8(*funcname));
@@ -103,15 +108,26 @@ FLuaBPVar ULuaBlueprintLibrary::CreateVarFromBool(bool b) {
     return v;
 }
 
-FLuaBPVar ULuaBlueprintLibrary::CreateVarFromObject(UObject* o) {
+FLuaBPVar ULuaBlueprintLibrary::CreateVarFromObject(UObject* WorldContextObject, UObject* o) {
     using namespace NS_SLUA;
-    auto ls = LuaState::get();
+	auto actor = Cast<AActor>(WorldContextObject);
+	ensure(actor);
+	auto ls = LuaState::get(actor->GetGameInstance());
     if(!ls) return FLuaBPVar();
     LuaObject::push(ls->getLuaState(),o);
     LuaVar ret(ls->getLuaState(),-1);
     lua_pop(ls->getLuaState(),1);
     return FLuaBPVar(ret);
 }
+
+int FLuaBPVar::checkValue(NS_SLUA::lua_State* L, FStructProperty* p, uint8* params, int i)
+{
+	FLuaBPVar ret;
+	ret.value.set(L, i);
+	p->CopyCompleteValue(params, &ret);
+	return 0;
+}
+
 
 namespace {
     using namespace NS_SLUA;

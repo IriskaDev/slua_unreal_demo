@@ -14,16 +14,18 @@
 
 #include "LuaUserWidget.h"
 
+#if (ENGINE_MINOR_VERSION>20) && (ENGINE_MAJOR_VERSION>=4)
 void ULuaUserWidget::NativeOnInitialized()
 {
 	Super::NativeOnInitialized();
 	init(this, "LuaUserWidget", LuaStateName, LuaFilePath);
 }
+#endif
 
 void ULuaUserWidget::NativeConstruct()
 {
 	if (!LuaFilePath.IsEmpty() && !getSelfTable().isValid())
-		init(this, "LuaUserWidget", LuaStateName, LuaFilePath);
+		init(this,"LuaUserWidget", LuaStateName, LuaFilePath);
 	Super::NativeConstruct();
 	if (getSelfTable().isValid()) {
 #if (ENGINE_MINOR_VERSION==18)
@@ -58,6 +60,14 @@ void ULuaUserWidget::NativeTick(const FGeometry & MyGeometry, float InDeltaTime)
 	}
 }
 
+void ULuaUserWidget::tick(float dt) {
+	if (!tickFunction.isValid()) {
+		superTick();
+		return;
+	}
+	tickFunction.call(luaSelfTable, &currentGeometry, dt);
+}
+
 void ULuaUserWidget::ProcessEvent(UFunction * func, void * params)
 {
 	if (luaImplemented(func, params))
@@ -68,4 +78,11 @@ void ULuaUserWidget::ProcessEvent(UFunction * func, void * params)
 void ULuaUserWidget::superTick()
 {
 	Super::Tick(currentGeometry, deltaTime);
+}
+
+void ULuaUserWidget::superTick(NS_SLUA::lua_State* L)
+{
+	currentGeometry = NS_SLUA::LuaObject::checkValue<FGeometry>(L, 2);
+	deltaTime = luaL_checknumber(L, 3);
+	superTick();
 }

@@ -26,7 +26,7 @@ namespace NS_SLUA {
         SluaUtil::reg(L,"Array",__ctor);
     }
 
-    void LuaArray::clone(FScriptArray* destArray, UProperty* p, const FScriptArray* srcArray) {
+    void LuaArray::clone(FScriptArray* destArray, FProperty* p, const FScriptArray* srcArray) {
         // blueprint stack will destroy the TArray
         // so deep-copy construct FScriptArray
         // it's very expensive
@@ -44,39 +44,41 @@ namespace NS_SLUA {
         }
     }
 
-	LuaArray::LuaArray(UProperty* p, FScriptArray* buf)
+	LuaArray::LuaArray(FProperty* p, FScriptArray* buf)
 		: inner(p)
 		, prop(nullptr)
 		, propObj(nullptr)
     {
 		array = new FScriptArray();
 		clone(array, p, buf);
+		shouldFree = true;
     }
 
-	LuaArray::LuaArray(UArrayProperty* p, UObject* obj)
+	LuaArray::LuaArray(FArrayProperty* p, UObject* obj)
 		: inner(p->Inner)
 		, prop(p)
 		, propObj(obj)
 	{
 		array = prop->ContainerPtrToValuePtr<FScriptArray>(obj);
+		shouldFree = false;
 	}
 
     LuaArray::~LuaArray() {
-		if (!propObj)
+		if (shouldFree)
 		{
 			// should destroy inner property value
 			clear();
-			if (!prop) SafeDelete(array);
+			ensure(array);
+			SafeDelete(array);
 		}
 		
-		inner = nullptr;
 		propObj = nullptr;
     }
 
     void LuaArray::clear() {
         if(!inner) return;
 
-		if (!prop) {
+		if (shouldFree) {
 			uint8 *Dest = getRawPtr(0);
 			for (int32 i = 0; i < array->Num(); i++, Dest += inner->ElementSize)
 			{
@@ -88,17 +90,19 @@ namespace NS_SLUA {
 
     void LuaArray::AddReferencedObjects( FReferenceCollector& Collector )
     {
-        // I noticed this function be called in collect thread
-        // should add a lock, but I don't find any lock code in unreal engine codebase
-        // why?
-        Collector.AddReferencedObject(inner);
-		if (prop) Collector.AddReferencedObject(prop);
+        if (inner) inner->AddReferencedObjects(Collector);
+		if (prop) prop->AddReferencedObjects(Collector);
 		if (propObj) Collector.AddReferencedObject(propObj);
-        // if empty
-        if(num()==0) return;
-        for(int n=0;n<num();n++) {
+
+        // if empty or owner object had been collected
+		// AddReferencedObject will auto null propObj
+        if((!shouldFree && !propObj) || num()==0) return;
+		for (int n = num() - 1; n >= 0; n--) {
             void* ptr = getRawPtr(n);
-			LuaReference::addRefByProperty(Collector, inner, ptr);
+			// if AddReferencedObject collect obj
+			// we will auto remove it
+			if (LuaReference::addRefByProperty(Collector, inner, ptr))
+				remove(n);
         }
     }
 
@@ -133,7 +137,7 @@ namespace NS_SLUA {
 
     void LuaArray::destructItems(int index,int count) {
         // if array is owned by uobject, don't destructItems
-        if(prop) return;
+        if(!shouldFree) return;
         if (!(inner->PropertyFlags & (CPF_IsPlainOldData | CPF_NoDestructor)))
 		{
 			uint8 *Dest = getRawPtr(index);
@@ -159,12 +163,12 @@ namespace NS_SLUA {
 		}
     }
 
-    int LuaArray::push(lua_State* L,UProperty* inner,FScriptArray* data) {
+    int LuaArray::push(lua_State* L,FProperty* inner,FScriptArray* data) {
         LuaArray* luaArrray = new LuaArray(inner,data);
 		return LuaObject::pushType(L,luaArrray,"LuaArray",setupMT,gc);
     }
 
-	int LuaArray::push(lua_State* L, UArrayProperty* prop, UObject* obj) {
+	int LuaArray::push(lua_State* L, FArrayProperty* prop, UObject* obj) {
 		auto scriptArray = prop->ContainerPtrToValuePtr<FScriptArray>(obj);
 		if (LuaObject::getFromCache(L, scriptArray, "LuaArray")) return 1;
 		LuaArray* luaArray = new LuaArray(prop, obj);
@@ -177,7 +181,7 @@ namespace NS_SLUA {
 		auto type = (EPropertyClass) LuaObject::checkValue<int>(L,1);
 		auto cls = LuaObject::checkValueOpt<UClass*>(L, 2, nullptr);
         if(type==EPropertyClass::Object && !cls)
-            luaL_error(L,"Array of UObject should have secend parameter is UClass");
+            luaL_error(L,"Array of UObject should have second parameter is UClass");
 		auto array = FScriptArray();
 		return push(L, PropertyProto::createProperty({ type, cls }), &array);
     }
@@ -190,7 +194,7 @@ namespace NS_SLUA {
     int LuaArray::Get(lua_State* L) {
         CheckUD(LuaArray,L,1);
         int i = LuaObject::checkValue<int>(L,2);
-        UProperty* element = UD->inner;
+        FProperty* element = UD->inner;
 		if (!UD->isValidIndex(i)) {
 			luaL_error(L, "Array get index %d out of range", i);
 			return 0;
@@ -203,7 +207,7 @@ namespace NS_SLUA {
 	{
 		CheckUD(LuaArray, L, 1);
 		int index = LuaObject::checkValue<int>(L, 2);
-		UProperty* element = UD->inner;
+		FProperty* element = UD->inner;
 		auto checker = LuaObject::getChecker(element);
 		if (checker) {
 			if (!UD->isValidIndex(index))
@@ -221,7 +225,7 @@ namespace NS_SLUA {
 	int LuaArray::Add(lua_State* L) {
         CheckUD(LuaArray,L,1);
         // get element property
-        UProperty* element = UD->inner;
+        FProperty* element = UD->inner;
         auto checker = LuaObject::getChecker(element);
         if(checker) {
             checker(L,element,UD->add(),2);
@@ -240,7 +244,7 @@ namespace NS_SLUA {
         int index = LuaObject::checkValue<int>(L,2);
         
         // get element property
-        UProperty* element = UD->inner;
+        FProperty* element = UD->inner;
         auto checker = LuaObject::getChecker(element);
         if(checker) {
 
@@ -291,7 +295,7 @@ namespace NS_SLUA {
 		CheckUD(LuaArray::Enumerator, L, 1);
 		auto arr = UD->arr;
 		if (arr->isValidIndex(UD->index)) {
-			auto element = arr->inner;
+            auto element = arr->inner;
 			auto es = element->ElementSize;
 			auto parms = ((uint8*)arr->array->GetData()) + UD->index * es;
 			LuaObject::push(L, UD->index);

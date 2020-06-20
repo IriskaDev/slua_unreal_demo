@@ -268,7 +268,6 @@ namespace NS_SLUA {
         numOfVar = 0;
         delete[] vars;
         vars = nullptr;
-		stateIndex = INVALID_INDEX;
     }
 
     void LuaVar::alloc(int n) {
@@ -581,14 +580,14 @@ namespace NS_SLUA {
         return lua_gettop(L)-top+1;
     }
 
-    int LuaVar::pushArgByParms(UProperty* prop,uint8* parms) {
+    int LuaVar::pushArgByParms(FProperty* prop,uint8* parms) {
         auto L = getState();
-        if (LuaObject::push(L,prop,parms))
+        if (LuaObject::push(L,prop,parms,false))
             return prop->ElementSize;
         return 0;
     }
 
-    bool LuaVar::callByUFunction(UFunction* func,uint8* parms, LuaVar* pSelf) {
+    bool LuaVar::callByUFunction(UFunction* func,uint8* parms, LuaVar* pSelf, FOutParmRec* OutParms) {
         
         if(!func) return false;
 
@@ -617,8 +616,8 @@ namespace NS_SLUA {
 			n++;
 		}
         // push arguments to lua state
-        for(TFieldIterator<UProperty> it(func);it && (it->PropertyFlags&CPF_Parm);++it) {
-            UProperty* prop = *it;
+        for(TFieldIterator<FProperty> it(func);it && (it->PropertyFlags&CPF_Parm);++it) {
+            FProperty* prop = *it;
             uint64 propflag = prop->GetPropertyFlags();
             if((propflag&CPF_ReturnParm) || IsRealOutParam(propflag))
                 continue;
@@ -642,15 +641,17 @@ namespace NS_SLUA {
         }
 
 		// fill lua return value to blueprint stack if argument is out param
-		for (TFieldIterator<UProperty> it(func); remain >0 && it && (it->PropertyFlags&CPF_Parm); ++it) {
-			UProperty* prop = *it;
+		for (TFieldIterator<FProperty> it(func); remain >0 && it && (it->PropertyFlags&CPF_Parm); ++it) {
+			FProperty* prop = *it;
 			uint64 propflag = prop->GetPropertyFlags();
 			if (IsRealOutParam(propflag))
 			{
 				auto checkder = prop ? LuaObject::getChecker(prop) : nullptr;
+				uint8* outPamams = OutParms ? OutParms->PropAddr : parms + prop->GetOffset_ForInternal();
 				if (checkder) {
-					(*checkder)(L, prop, parms + prop->GetOffset_ForInternal(), lua_absindex(L, -remain));
+					(*checkder)(L, prop, outPamams, lua_absindex(L, -remain));
 				}
+				if(OutParms) OutParms = OutParms->NextOutParm;
 				remain--;
 			}
 		}
@@ -712,7 +713,7 @@ namespace NS_SLUA {
         other.vars = nullptr;
     }
 
-    bool LuaVar::toProperty(UProperty* p,uint8* ptr) {
+    bool LuaVar::toProperty(FProperty* p,uint8* ptr) {
 
         auto func = LuaObject::getChecker(p);
         if(func) {

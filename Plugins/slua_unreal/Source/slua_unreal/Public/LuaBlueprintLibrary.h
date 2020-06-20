@@ -30,6 +30,8 @@ public:
 	FLuaBPVar() {}
 
 	NS_SLUA::LuaVar value;
+
+	static int checkValue(NS_SLUA::lua_State* L, FStructProperty* p, uint8* params, int i);
 };
 
 UCLASS()
@@ -40,11 +42,11 @@ class SLUA_UNREAL_API ULuaBlueprintLibrary : public UBlueprintFunctionLibrary
 public:
 
 	/** Call a lua function with args */
-	UFUNCTION(BlueprintCallable, meta=( DisplayName="Call To Lua With Arguments" ), Category="slua")
-	static FLuaBPVar CallToLuaWithArgs(FString FunctionName,const TArray<FLuaBPVar>& Args,FString StateName);
+	UFUNCTION(BlueprintCallable, meta=( DisplayName="Call To Lua With Arguments", WorldContext = "WorldContextObject"), Category="slua")
+	static FLuaBPVar CallToLuaWithArgs(UObject* WorldContextObject, FString FunctionName,const TArray<FLuaBPVar>& Args,FString StateName);
 
-	UFUNCTION(BlueprintCallable, meta=( DisplayName="Call To Lua" ), Category="slua")
-	static FLuaBPVar CallToLua(FString FunctionName,FString StateName);
+	UFUNCTION(BlueprintCallable, meta=( DisplayName="Call To Lua", WorldContext = "WorldContextObject"), Category="slua")
+	static FLuaBPVar CallToLua(UObject* WorldContextObject, FString FunctionName,FString StateName);
 
 	UFUNCTION(BlueprintCallable, Category="slua")
 	static FLuaBPVar CreateVarFromInt(int Value);
@@ -58,8 +60,8 @@ public:
 	UFUNCTION(BlueprintCallable, Category="slua")
 	static FLuaBPVar CreateVarFromBool(bool Value);
 
-	UFUNCTION(BlueprintCallable, Category="slua")
-	static FLuaBPVar CreateVarFromObject(UObject* Value);
+	UFUNCTION(BlueprintCallable, meta = (WorldContext = "WorldContextObject"), Category="slua")
+	static FLuaBPVar CreateVarFromObject(UObject* WorldContextObject, UObject* Value);
 
 	UFUNCTION(BlueprintCallable, Category="slua")
 	static int GetIntFromVar(FLuaBPVar Value,int Index=1);

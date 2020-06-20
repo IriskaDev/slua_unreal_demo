@@ -46,19 +46,19 @@ namespace NS_SLUA {
 
 	public:
 		static void reg(lua_State* L);
-		static int push(lua_State* L, UProperty* keyProp, UProperty* valueProp, const FScriptMap* buf, bool frombp=true);
-		static int push(lua_State* L, UMapProperty* prop, UObject* obj);
+		static int push(lua_State* L, FProperty* keyProp, FProperty* valueProp, const FScriptMap* buf, bool frombp=true);
+		static int push(lua_State* L, FMapProperty* prop, UObject* obj);
 		template<typename K,typename V>
 		static int push(lua_State* L, const TMap<K, V>& v) {
-			UProperty* keyProp = PropertyProto::createProperty(PropertyProto::get<K>());
-			UProperty* valueProp = PropertyProto::createProperty(PropertyProto::get<V>());
+			FProperty* keyProp = PropertyProto::createProperty(PropertyProto::get<K>());
+			FProperty* valueProp = PropertyProto::createProperty(PropertyProto::get<V>());
 			return push(L, keyProp, valueProp, reinterpret_cast<const FScriptMap*>(&v),false);
 		}
 
-		static void clone(FScriptMap* dest,UProperty* keyProp, UProperty* valueProp,const FScriptMap* src);
+		static void clone(FScriptMap* dest,FProperty* keyProp, FProperty* valueProp,const FScriptMap* src);
 
-		LuaMap(UProperty* keyProp, UProperty* valueProp, const FScriptMap* buf, bool frombp);
-		LuaMap(UMapProperty* prop, UObject* obj);
+		LuaMap(FProperty* keyProp, FProperty* valueProp, const FScriptMap* buf, bool frombp);
+		LuaMap(FMapProperty* prop, UObject* obj);
 		~LuaMap();
 
 		const FScriptMap* get() {
@@ -78,9 +78,9 @@ namespace NS_SLUA {
 		template<typename TKey, typename TValue>
 		const TMap<TKey, TValue>& asTMap(lua_State* L) const {
 			if (sizeof(TKey) != keyProp->ElementSize)
-				luaL_error(L, "Cast to TMap error, key element size isn't mathed(%d,%d)", sizeof(TKey), keyProp->ElementSize);
+				luaL_error(L, "Cast to TMap error, key element size isn't matched(%d,%d)", sizeof(TKey), keyProp->ElementSize);
 			if (sizeof(TValue) != valueProp->ElementSize)
-				luaL_error(L, "Cast to TMap error, value element size isn't mathed(%d,%d)", sizeof(TValue), valueProp->ElementSize);
+				luaL_error(L, "Cast to TMap error, value element size isn't matched(%d,%d)", sizeof(TValue), valueProp->ElementSize);
 
 			// modified FScriptMap::CheckConstraints function to check type constraints
 			typedef FScriptMap ScriptType;
@@ -111,12 +111,13 @@ namespace NS_SLUA {
 
 	private:
 		FScriptMap* map;
-		UProperty* keyProp;
-		UProperty* valueProp;
-		UMapProperty* prop;
+		FProperty* keyProp;
+		FProperty* valueProp;
+		FMapProperty* prop;
 		UObject* propObj;
 		FScriptMapHelper helper;
 		bool createdByBp;
+		bool shouldFree;
 
 		static int setupMT(lua_State* L);
 		static int gc(lua_State* L);

@@ -12,10 +12,28 @@
 // See the License for the specific language governing permissions and limitations under the License.
 
 #include "SlateColorBrush.h"
-#include "slua_profile_inspector.h"
+#include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Images/SImage.h"
+#include "Public/Brushes/SlateDynamicImageBrush.h"
+#include "Public/Brushes/SlateImageBrush.h"
+#include "GenericPlatform/GenericPlatformMath.h"
+#include "UObject/UObjectGlobals.h"
+#include "Templates/SharedPointer.h"
+#include "Delegates/IDelegateInstance.h"
+#include "Internationalization/Regex.h"
+#include "Fonts/SlateFontInfo.h"
+#include "Math/Vector2D.h"
+#include "Math/Color.h"
+#include "EditorStyleSet.h"
+#include "LuaProfiler.h"
+#include "Sockets.h"
+#include "Log.h"
 #include "slua_profile.h"
+#include "slua_profile_inspector.h"
 
 static const FName slua_profileTabNameInspector("slua_profile");
+void SortMemInfo(ShownMemInfoList& list, int beginIndex, int endIndex);
+void ExchangeMemInfoNode(ShownMemInfoList& list, int originIndx, int newIndex);
 ///////////////////////////////////////////////////////////////////////////
 SProfilerInspector::SProfilerInspector()
 {
@@ -23,11 +41,20 @@ SProfilerInspector::SProfilerInspector()
 	arrayOffset = 0;
 	lastArrayOffset = 0;
 	refreshIdx = 0;
+	maxLuaMemory = 0.0f;
+	avgLuaMemory = 0.0f;
+	luaTotalMemSize = 0.0f;
 	maxProfileSamplesCostTime = 0.0f;
 	avgProfileSamplesCostTime = 0.0f;
+    isMemMouseButtonUp = false;
 	hasCleared = false;
 	needProfilerCleared = false;
+    mouseUpPoint = FVector2D(-1.0f, 0.0f);
+    mouseDownPoint = FVector2D(-1.0f, 0.0f);
+	initLuaMemChartList();
 	chartValArray.SetNumUninitialized(sampleNum);
+	memChartValArray.SetNumUninitialized(sampleNum);
+	luaMemNodeChartList.SetNumUninitialized(sampleNum);
 }
 
 SProfilerInspector::~SProfilerInspector()
@@ -36,11 +63,14 @@ SProfilerInspector::~SProfilerInspector()
 	shownRootProfiler.Empty();
 	tmpRootProfiler.Empty();
 	tmpProfiler.Empty();
+	luaMemNodeChartList.Empty();
+    tempLuaMemNodeChartList.Empty();
 }
 
 void SProfilerInspector::StartChartRolling()
 {
 	stopChartRolling = false;
+    isMemMouseButtonUp = false;
 }
 
 FString SProfilerInspector::GenBrevFuncName(FString &functionName)
@@ -61,6 +91,20 @@ FString SProfilerInspector::GenBrevFuncName(FString &functionName)
 	return brevName;
 }
 
+void SProfilerInspector::initLuaMemChartList()
+{
+	for(int32 i = 0; i < cMaxSampleNum; i++)
+	{
+		ProflierMemNode memNode;
+        memNode.totalSize = -1.0f;
+		luaMemNodeChartList.Add(memNode);
+	}
+
+	ProflierMemNode memNode;
+	memNode.totalSize = 0.0f;
+	luaMemNodeChartList.Add(memNode);
+}
+
 void  SProfilerInspector::CopyFunctionNode(TSharedPtr<FunctionProfileInfo>& oldFuncNode, TSharedPtr<FunctionProfileInfo>& newFuncNode)
 {
 	newFuncNode->functionName = oldFuncNode->functionName;
@@ -77,13 +121,14 @@ void  SProfilerInspector::CopyFunctionNode(TSharedPtr<FunctionProfileInfo>& oldF
 	newFuncNode->mergeIdxArray = oldFuncNode->mergeIdxArray;
 }
 
-void SProfilerInspector::Refresh(TArray<SluaProfiler>& profilersArray)
+void SProfilerInspector::Refresh(TArray<SluaProfiler>& profilersArray, TArray<NS_SLUA::LuaMemInfo> memoryInfoList)
 {
 	if (stopChartRolling == true || profilersArray.Num() == 0)
 	{
 		return;
 	}
 
+	CollectMemoryNode(memoryInfoList);
 	AssignProfiler(profilersArray, tmpRootProfiler, tmpProfiler);
 
 	tmpProfilersArraySamples[arrayOffset] = profilersArray;
@@ -93,6 +138,7 @@ void SProfilerInspector::Refresh(TArray<SluaProfiler>& profilersArray)
 	{
 		// merge tempRootProfiler funcNode
 		TArray<int> emptyMergeArray;
+
 		for (int idx = 0; idx < tmpRootProfiler.Num(); idx++)
 		{
 			TSharedPtr<FunctionProfileInfo> &funcNode = tmpRootProfiler[idx];
@@ -104,38 +150,49 @@ void SProfilerInspector::Refresh(TArray<SluaProfiler>& profilersArray)
 		}
 
 		SortProfiler(tmpRootProfiler);
-		AssignProfiler(tmpRootProfiler, shownRootProfiler);	
+		AssignProfiler(tmpRootProfiler, shownRootProfiler);
 		AssignProfiler(tmpProfiler, shownProfiler);
-		
+
 		if (hasCleared == true)
 		{
 			treeview->RebuildList();
+			memTreeView->RebuildList();
 			hasCleared = false;
 		}
 		treeview->RequestTreeRefresh();
+		memTreeView->RequestTreeRefresh();
 
-		// replace tmp samples
+		// replace tmp samples and update memory node list
 		for (int sampleIdx = 0; sampleIdx<sampleNum; sampleIdx++)
 		{
 			profilersArraySamples[sampleIdx] = tmpProfilersArraySamples[sampleIdx];
-		}
+
+			memChartValArray[sampleIdx] = luaMemNodeChartList[sampleIdx].totalSize;
+        }
 
 		RefreshBarValue();
+		memTreeView->RequestTreeRefresh();
 	}
 	return;
 }
 
 void SProfilerInspector::RefreshBarValue()
 {
+	int nodeSize = 0;
+	int sampleIdx = arrayOffset;
+	float totalMemory = 0.0f;
+	float totalSampleValue = 0.0f;
+
+	maxLuaMemory = 0.0f;
+	avgLuaMemory = 0.0f;
 	maxProfileSamplesCostTime = 0.0f;
 	avgProfileSamplesCostTime = 0.0f;
 	lastArrayOffset = arrayOffset;
-	int sampleIdx = arrayOffset;
-	float totalSampleValue = 0.0f;
 	for (int idx = 0; idx<sampleNum; idx++)
 	{
 		TArray<SluaProfiler> &shownProfilerBar = profilersArraySamples[sampleIdx];
 		float totalValue = 0.0f;
+		float memorySize = 0.0f;
 		if (shownProfilerBar.Num() == 0)
 		{
 			chartValArray[idx] = -1.0f;
@@ -158,12 +215,26 @@ void SProfilerInspector::RefreshBarValue()
 			maxProfileSamplesCostTime = totalValue;
 		}
 		sampleIdx = (sampleIdx == (sampleNum - 1)) ? 0 : (sampleIdx + 1);
+
+		memorySize = luaMemNodeChartList[idx].totalSize;
+		if(memorySize >= 0)
+		{
+			totalMemory += memorySize;
+			nodeSize ++;
+		}
+		if (memorySize > maxLuaMemory) maxLuaMemory = memorySize;
+
 	}
-
+    tempLuaMemNodeChartList.Empty();
+    tempLuaMemNodeChartList = luaMemNodeChartList;
 	avgProfileSamplesCostTime = totalSampleValue / sampleNum;
+	cpuProfilerWidget->SetArrayValue(chartValArray, maxProfileSamplesCostTime, maxLuaMemory);
 
-	profilerWidget->SetArrayValue(chartValArray, maxProfileSamplesCostTime);
+	// Add memory total size into the array;
+	if(totalMemory >= 0 && nodeSize > 0) avgLuaMemory = totalMemory / nodeSize;
+	memProfilerWidget->SetArrayValue(memChartValArray, maxProfileSamplesCostTime, maxLuaMemory);
 
+	CombineSameFileInfo(luaMemNodeChartList[luaMemNodeChartList.Num() - 1].infoList);
 }
 
 void SProfilerInspector::AssignProfiler(TArray<SluaProfiler> &profilerArray, SluaProfiler& rootProfilers, SluaProfiler& profilers)
@@ -208,17 +279,9 @@ void SProfilerInspector::AssignProfiler(TArray<SluaProfiler> &profilerArray, Slu
 	}
 
 	// clear unused element
-	for (; nodeIdx < profilers.Num(); nodeIdx++)
-	{
-		profilers[nodeIdx]->functionName = "";
-		profilers[nodeIdx]->brevName = "";
-	}
+	profilers.SetNum(nodeIdx);
 
-	for (; rootNodeIdx < rootProfilers.Num(); rootNodeIdx++)
-	{
-		rootProfilers[rootNodeIdx]->functionName = "";
-		rootProfilers[rootNodeIdx]->brevName = "";
-	}
+	rootProfilers.SetNum(rootNodeIdx);
 }
 
 void SProfilerInspector::AssignProfiler(SluaProfiler& srcProfilers, SluaProfiler& dstProfilers)
@@ -239,10 +302,7 @@ void SProfilerInspector::AssignProfiler(SluaProfiler& srcProfilers, SluaProfiler
 		nodeIdx++;
 	}
 
-	for (; nodeIdx < dstProfilers.Num(); nodeIdx++)
-	{
-		dstProfilers[nodeIdx]->functionName = "";
-	}
+	dstProfilers.SetNum(nodeIdx);
 }
 
 bool SProfilerInspector::NeedReBuildInspector()
@@ -264,7 +324,11 @@ void SProfilerInspector::CheckBoxChanged(ECheckBoxState newState)
 	if (newState == ECheckBoxState::Checked)
 	{
 		stopChartRolling = false;
-		profilerWidget->ClearClickedPoint();
+        isMemMouseButtonUp = false;
+		memProfilerCheckBox->SetIsChecked(ECheckBoxState::Checked);
+		profilerCheckBox->SetIsChecked(ECheckBoxState::Checked);
+		memProfilerWidget->ClearClickedPoint();
+		cpuProfilerWidget->ClearClickedPoint();
 	}
 	else
 	{
@@ -278,55 +342,84 @@ void SProfilerInspector::OnClearBtnClicked()
 	{
 		chartValArray[barIdx] = -1.0f;
 	}
-
+	
 	TArray<float> emptyArray;
-	profilerWidget->SetArrayValue(emptyArray, 0);
-	profilerWidget->SetToolTipVal(-1);
-	profilerWidget->ClearClickedPoint();
-
-
+	cpuProfilerWidget->SetArrayValue(emptyArray, 0, 0);
+	cpuProfilerWidget->SetToolTipVal(-1);
+	cpuProfilerWidget->ClearClickedPoint();
+	
+	memProfilerWidget->SetArrayValue(emptyArray, 0, 0);
+	memProfilerWidget->SetToolTipVal(-1);
+	memProfilerWidget->ClearClickedPoint();
+	
+	luaMemNodeChartList.Empty();
+    tempLuaMemNodeChartList.Empty();
+	shownFileInfo.Empty();
+    shownParentFileName.Empty();
+	initLuaMemChartList();
+    
+    luaTotalMemSize = 0.0f;
+    maxLuaMemory = 0.0f;
+    avgLuaMemory = 0.0f;
+	
 	for (int sampleIdx = 0; sampleIdx<sampleNum; sampleIdx++)
 	{
 		tmpProfilersArraySamples[sampleIdx].Empty();
 		profilersArraySamples[sampleIdx].Empty();
 	}
-
+	
 	for (auto &funcNode : shownRootProfiler)
 	{
 		funcNode->functionName = "";
 		funcNode->brevName = "";
 	}
-
+	
 	if (treeview.IsValid())
 	{
 		treeview->RebuildList();
 		treeview->RequestTreeRefresh();
 	}
-
+	
+	if (memTreeView.IsValid())
+	{
+		memTreeView->RebuildList();
+		memTreeView->RequestTreeRefresh();
+	}
+	
 	hasCleared = true;
 	needProfilerCleared = true;
 }
 
-TSharedRef<class SDockTab> SProfilerInspector::GetSDockTab()
+TSharedRef<class SDockTab>  SProfilerInspector::GetSDockTab()
 {
-	FText WidgetText = FText::FromName("============================ CPU profiler ===========================");
+	FText WidgetText = FText::FromName("============================ slua profiler ===========================");
 
 	SAssignNew(profilerCheckBox, SCheckBox)
-		.OnCheckStateChanged_Raw(this, &SProfilerInspector::CheckBoxChanged)
-		.IsChecked(ECheckBoxState::Checked);
+	.OnCheckStateChanged_Raw(this, &SProfilerInspector::CheckBoxChanged)
+	.IsChecked(ECheckBoxState::Checked);
 
-	SAssignNew(profilerWidget, SProfilerWidget);
+	SAssignNew(memProfilerCheckBox, SCheckBox)
+	.OnCheckStateChanged_Raw(this, &SProfilerInspector::CheckBoxChanged)
+	.IsChecked(ECheckBoxState::Checked);
 
+	SAssignNew(cpuProfilerWidget, SProfilerWidget);
+	SAssignNew(memProfilerWidget, SProfilerWidget);
+
+    static int mouseDownMemIdx = -1;
+    static int mouseUpMemIdx = -1;
 	static bool isMouseButtonDown = false;
-	profilerWidget->SetOnMouseButtonDown(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
+	static bool isMemMouseButtonDown = false;
+	cpuProfilerWidget->SetOnMouseButtonDown(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
 		// stop scorlling and show the profiler info which we click
 		isMouseButtonDown = true;
 		stopChartRolling = true;
 		profilerCheckBox->SetIsChecked(ECheckBoxState::Unchecked);
+		memProfilerCheckBox->SetIsChecked(ECheckBoxState::Unchecked);
 
 		// calc sampleIdx
 		FVector2D cursorPos = inventoryGeometry.AbsoluteToLocal(mouseEvent.GetScreenSpacePosition());
-		int sampleIdx = profilerWidget->CalcClickSampleIdx(cursorPos);
+		int sampleIdx = cpuProfilerWidget->CalcClickSampleIdx(cursorPos);
+        cpuProfilerWidget->SetMouseClickPoint(cursorPos);
 		sampleIdx = lastArrayOffset + sampleIdx;
 		if (sampleIdx >= cMaxSampleNum)
 		{
@@ -348,31 +441,33 @@ TSharedRef<class SDockTab> SProfilerInspector::GetSDockTab()
 		return FReply::Handled();
 	}));
 
-	profilerWidget->SetOnMouseButtonUp(FPointerEventHandler::CreateLambda([=](const FGeometry&, const FPointerEvent&) -> FReply {
+
+	cpuProfilerWidget->SetOnMouseButtonUp(FPointerEventHandler::CreateLambda([=](const FGeometry&, const FPointerEvent&) -> FReply {
 		isMouseButtonDown = false;
 		return FReply::Handled();
 	}));
 
-	profilerWidget->SetOnMouseMove(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
+	cpuProfilerWidget->SetOnMouseMove(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
 		// calc sampleIdx
 		FVector2D cursorPos = inventoryGeometry.AbsoluteToLocal(mouseEvent.GetScreenSpacePosition());
-		int sampleIdx = profilerWidget->CalcHoverSampleIdx(cursorPos);
+		int sampleIdx = cpuProfilerWidget->CalcHoverSampleIdx(cursorPos);
 		static float lastToolTipVal = 0.0f;
 		if (sampleIdx >= 0 && lastToolTipVal != chartValArray[sampleIdx])
 		{
-			profilerWidget->SetToolTipVal(chartValArray[sampleIdx]/ perMilliSec);
+			cpuProfilerWidget->SetToolTipVal(chartValArray[sampleIdx]/ perMilliSec);
 			lastToolTipVal = chartValArray[sampleIdx];
 		}
 		else if (sampleIdx < 0)
 		{
-			profilerWidget->SetToolTipVal(-1.0f);
+			cpuProfilerWidget->SetToolTipVal(-1.0f);
 		}
 
 		////////////////////////////////
 		if (isMouseButtonDown == true)
 		{
 			// calc sampleIdx
-			sampleIdx = profilerWidget->CalcClickSampleIdx(cursorPos);
+			sampleIdx = cpuProfilerWidget->CalcClickSampleIdx(cursorPos);
+            cpuProfilerWidget->SetMouseClickPoint(cursorPos);
 			sampleIdx = lastArrayOffset + sampleIdx;
 			if (sampleIdx >= cMaxSampleNum)
 			{
@@ -391,93 +486,375 @@ TSharedRef<class SDockTab> SProfilerInspector::GetSDockTab()
 				ShowProfilerTree(profilersArraySamples[sampleIdx]);
 			}
 		}
-		
+
+		return FReply::Handled();
+	}));
+    
+    cpuProfilerWidget->SetOnMouseLeave(FSimpleNoReplyPointerEventHandler::CreateLambda([=](const FPointerEvent&) {
+        isMouseButtonDown = false;
+    }));
+
+
+	memProfilerWidget->SetOnMouseButtonDown(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
+		// stop scorlling and show the profiler info which we click
+		isMemMouseButtonDown = true;
+        isMemMouseButtonUp = false;
+		stopChartRolling = true;
+		memProfilerCheckBox->SetIsChecked(ECheckBoxState::Unchecked);
+		profilerCheckBox->SetIsChecked(ECheckBoxState::Unchecked);
+
+		// calc sampleIdx
+		FVector2D cursorPos = inventoryGeometry.AbsoluteToLocal(mouseEvent.GetScreenSpacePosition());
+        mouseDownMemIdx = memProfilerWidget->CalcClickSampleIdx(cursorPos);
+        memProfilerWidget->SetMouseClickPoint(cursorPos);
+		if (mouseDownMemIdx >= 0 && mouseDownMemIdx < cMaxSampleNum)
+		{
+            mouseDownPoint = cursorPos;
+			CombineSameFileInfo(tempLuaMemNodeChartList[mouseDownMemIdx].infoList);
+			luaTotalMemSize = tempLuaMemNodeChartList[mouseDownMemIdx].totalSize;
+			memTreeView->RequestTreeRefresh();
+		}
+
+        memProfilerWidget->SetMouseMovePoint(mouseDownPoint);
+		return FReply::Handled();
+	}));
+    
+    memProfilerWidget->SetOnMouseMove(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
+        // calc sampleIdx
+        FVector2D cursorPos = inventoryGeometry.AbsoluteToLocal(mouseEvent.GetScreenSpacePosition());
+        int sampleIdx = memProfilerWidget->CalcHoverSampleIdx(cursorPos);
+        static float lastToolTipVal = 0.0f;
+        
+        if (sampleIdx >= 0 && lastToolTipVal != tempLuaMemNodeChartList[sampleIdx].totalSize)
+        {
+            memProfilerWidget->SetToolTipVal(tempLuaMemNodeChartList[sampleIdx].totalSize);
+            lastToolTipVal = tempLuaMemNodeChartList[sampleIdx].totalSize;
+        }
+        else if (sampleIdx < 0)
+        {
+            memProfilerWidget->SetToolTipVal(-1.0f);
+        }
+        
+        if (isMemMouseButtonDown == true)
+        {
+            // calc sampleIdx
+            sampleIdx = memProfilerWidget->CalcClickSampleIdx(cursorPos);
+            if (sampleIdx >= 0 && sampleIdx < cMaxSampleNum)
+            {
+                mouseUpMemIdx = sampleIdx;
+                mouseUpPoint = cursorPos;
+                memProfilerWidget->SetMouseMovePoint(mouseUpPoint);
+                CombineSameFileInfo(tempLuaMemNodeChartList[sampleIdx].infoList);
+                luaTotalMemSize = tempLuaMemNodeChartList[sampleIdx].totalSize;
+                memTreeView->RequestTreeRefresh();
+            }
+        }
+        
+        return FReply::Handled();
+    }));
+
+
+	memProfilerWidget->SetOnMouseButtonUp(FPointerEventHandler::CreateLambda([=](const FGeometry& inventoryGeometry, const FPointerEvent& mouseEvent) -> FReply {
+        isMemMouseButtonUp = true;
+        
+        if (mouseUpPoint.X != mouseDownPoint.X
+            && mouseDownMemIdx >= 0 && mouseDownMemIdx < cMaxSampleNum)
+        {
+            memProfilerWidget->SetMouseMovePoint(mouseUpPoint);
+            CalcPointMemdiff(mouseDownMemIdx, mouseUpMemIdx);
+            memTreeView->RequestTreeRefresh();
+        }
+        
+		isMemMouseButtonDown = false;
 		return FReply::Handled();
 	}));
 
-	profilerWidget->SetOnMouseLeave(FSimpleNoReplyPointerEventHandler::CreateLambda([=](const FPointerEvent&) {
-		isMouseButtonDown = false;
+	memProfilerWidget->SetOnMouseLeave(FSimpleNoReplyPointerEventHandler::CreateLambda([=](const FPointerEvent&) {
+		isMemMouseButtonDown = false;
 	}));
-	
+
 	// init tree view
 	SAssignNew(treeview, STreeView<TSharedPtr<FunctionProfileInfo>>)
-		.ItemHeight(800)
-		.TreeItemsSource(&shownRootProfiler)
-		.OnGenerateRow_Raw(this, &SProfilerInspector::OnGenerateRowForList)
-		.OnGetChildren_Raw(this, &SProfilerInspector::OnGetChildrenForTree)
-		.SelectionMode(ESelectionMode::None)
-		.HeaderRow
-		(
-			SNew(SHeaderRow)
-			+ SHeaderRow::Column("Overview").DefaultLabel(FText::FromName("Overview")).FixedWidth(fixRowWidth)
-			+ SHeaderRow::Column("Time ms").DefaultLabel(FText::FromName("Time ms")).FixedWidth(fixRowWidth)
-			+ SHeaderRow::Column("Calls").DefaultLabel(FText::FromName("Calls")).FixedWidth(fixRowWidth)
-		);
+	.ItemHeight(800)
+	.TreeItemsSource(&shownRootProfiler)
+	.OnGenerateRow_Raw(this, &SProfilerInspector::OnGenerateRowForList)
+	.OnGetChildren_Raw(this, &SProfilerInspector::OnGetChildrenForTree)
+	.SelectionMode(ESelectionMode::None)
+	.HeaderRow
+	(
+	 SNew(SHeaderRow)
+	 + SHeaderRow::Column("Overview").DefaultLabel(FText::FromName("Overview")).FixedWidth(fixRowWidth)
+	 + SHeaderRow::Column("Time ms").DefaultLabel(FText::FromName("Time ms")).FixedWidth(fixRowWidth)
+	 + SHeaderRow::Column("Calls").DefaultLabel(FText::FromName("Calls")).FixedWidth(fixRowWidth)
+	 );
 
+    SAssignNew(memTreeView, STreeView<TSharedPtr<FileMemInfo>>)
+    .ItemHeight(800)
+    .TreeItemsSource(&shownParentFileName)
+    .OnGenerateRow_Raw(this, &SProfilerInspector::OnGenerateMemRowForList)
+    .OnGetChildren_Raw(this, &SProfilerInspector::OnGetMemChildrenForTree)
+    .SelectionMode(ESelectionMode::None)
+    .HeaderRow
+    (
+        SNew(SHeaderRow)
+         + SHeaderRow::Column("Overview").DefaultLabel(FText::FromName("Overview")).FixedWidth(fixRowWidth)
+         + SHeaderRow::Column("Memory Size").DefaultLabel(FText::FromName("Memory Size")).FixedWidth(fixRowWidth)
+         + SHeaderRow::Column("Compare Two Point").DefaultLabel(FText::FromName("Compare Two Point")).FixedWidth(fixRowWidth)
+     );
+
+	memProfilerWidget->SetStdLineVisibility(EVisibility::Collapsed);
+	cpuProfilerWidget->SetStdLineVisibility(EVisibility::Visible);
 	return SNew(SDockTab)
-		.TabRole(ETabRole::NomadTab)
+	.TabRole(ETabRole::NomadTab)
+	[//		 .AutoWidth()
+		SNew(SHorizontalBox)
+		+SHorizontalBox::Slot()
+		.FillWidth(0.2)
 		[
-			SNew(SScrollBox)
-			+ SScrollBox::Slot()
+			SNew(SBorder)
+			.HAlign(HAlign_Fill)
+			.VAlign(VAlign_Fill)
+			.BorderImage(FEditorStyle::GetBrush("ToolPanel.GroupBorder"))
 			[
-				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(25.0f)
+				SNew(SVerticalBox)
+				+SVerticalBox::Slot()
+				.Padding(8.0, 5.0)
+				.MaxHeight(200.0f)
+				.Padding(0, 3.0f)
 				[
-					profilerCheckBox.ToSharedRef()
-				]
-				+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(60.0f)
-				[
-					SNew(STextBlock).Text(FText::FromName("Animate"))
-				]
-				+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(60.0f)
-				[
-					SNew(SButton).Text(FText::FromName("Clear"))
-					.ContentPadding(FMargin(2.0, 2.0))
+					SAssignNew(cpuTabWidget, SProfilerTabWidget)
+					.TabIcon(FEditorStyle::GetBrush("ProfilerCommand.StatsProfiler"))
+					.TabName(FText::FromString("CPU Usages"))
 					.OnClicked(FOnClicked::CreateLambda([=]() -> FReply {
-						OnClearBtnClicked();
+					tabSwitcher->SetActiveWidgetIndex(0);
+					return FReply::Handled();
+					}))
+				]
+
+				+SVerticalBox::Slot()
+				.Padding(8.0, 5.0)
+				.MaxHeight(200.0f)
+				.Padding(0, 3.0f)
+				[
+					SAssignNew(memTabWidget, SProfilerTabWidget)
+					.TabIcon(FEditorStyle::GetBrush("ProfilerCommand.MemoryProfiler"))
+					.TabName(FText::FromString("Memory Usages"))
+					.OnClicked(FOnClicked::CreateLambda([=]() -> FReply {
+					tabSwitcher->SetActiveWidgetIndex(1);
 						return FReply::Handled();
 					}))
 				]
 			]
-			+ SScrollBox::Slot()
-			[
-				SNew(SHorizontalBox)
-				+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Fill)
-				[
-					profilerWidget.ToSharedRef()
-				]
-			]
-			+ SScrollBox::Slot()
+		]
+
+		+SHorizontalBox::Slot()
+		.FillWidth(0.8)
+		.HAlign(EHorizontalAlignment::HAlign_Fill)
+		[
+			SAssignNew(tabSwitcher, SWidgetSwitcher)
+			.WidgetIndex(0)
+			+SWidgetSwitcher::Slot()
 			[
 				SNew(SVerticalBox)
-				+ SVerticalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Center)
+				+SVerticalBox::Slot().AutoHeight()
 				[
-					SNew(STextBlock).Text_Lambda([=]() {
-						FString titleStr = FString::Printf(TEXT("============================ CPU profiler Max(%.2f ms), Avg(%.2f ms) ============================"),
-							maxProfileSamplesCostTime / perMilliSec, avgProfileSamplesCostTime / perMilliSec);
-						return FText::FromString(titleStr); })
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).AutoWidth().Padding(5.0f, 3.0f, 0, 0)
+					[
+						SNew(STextBlock)
+						.Text(FText::FromString("CPU	|	"))
+					]
+
+					+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(25.0f)
+					[
+						profilerCheckBox.ToSharedRef()
+					]
+
+					+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(60.0f).Padding(0, 3.0f, 0, 0)
+					[
+						SNew(STextBlock).Text(FText::FromName("Animate"))
+					]
+
+					+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(60.0f)
+					[
+						SNew(SButton).Text(FText::FromName("Clear"))
+						.ContentPadding(FMargin(2.0, 2.0))
+						.OnClicked(FOnClicked::CreateLambda([=]() -> FReply {
+						OnClearBtnClicked();
+						return FReply::Handled();
+						}))
+					]
 				]
+
 				+ SVerticalBox::Slot().AutoHeight()
 				[
-					treeview.ToSharedRef()
+					SNew(SHorizontalBox)
+					+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Fill)
+					[
+						cpuProfilerWidget.ToSharedRef()
+					]
+				]
+
+				+ SVerticalBox::Slot()
+				[
+                    SNew(SScrollBox)
+                    +SScrollBox::Slot()
+                    [
+                        SNew(SVerticalBox)
+                        + SVerticalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Center)
+                        [
+                            SNew(STextBlock).Text_Lambda([=]() {
+                                FString titleStr = FString::Printf(TEXT("============================ CPU profiler Max(%.3f ms), Avg(%.3f ms) ============================"),
+                                                               maxProfileSamplesCostTime / perMilliSec, avgProfileSamplesCostTime / perMilliSec);
+                                return FText::FromString(titleStr); })
+                        ]
+                    ]
+
+                    +SScrollBox::Slot()
+                    [
+                        treeview.ToSharedRef()
+                    ]
 				]
 			]
-		];
+
+			+SWidgetSwitcher::Slot()
+			.HAlign(EHorizontalAlignment::HAlign_Fill)
+			[
+				SAssignNew(tabSwitcher, SWidgetSwitcher)
+				.WidgetIndex(0)
+				+SWidgetSwitcher::Slot()
+				[
+					SNew(SVerticalBox)
+					+SVerticalBox::Slot().AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).AutoWidth().Padding(5.0f, 3.0f, 0, 0)
+						[
+							SNew(STextBlock)
+							.Text(FText::FromString("MEMORY	|   "))
+						]
+
+						+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Right).Padding(0, 3.0f, 15.0f, 0).AutoWidth()
+						[
+							SNew(STextBlock)
+							.Text_Lambda([=]() {
+							FString totalMemory = TEXT("Total : ") + ChooseMemoryUnit(luaTotalMemSize);
+							return FText::FromString(totalMemory);
+							})
+						]
+
+						+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(25.0f)
+						[
+							memProfilerCheckBox.ToSharedRef()
+						]
+
+						+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(60.0f).Padding(0, 3.0f, 0, 0)
+						[
+							SNew(STextBlock).Text(FText::FromName("Animate"))
+						]
+
+						+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).MaxWidth(60.0f)
+						[
+							SNew(SButton).Text(FText::FromName("Clear"))
+							.ContentPadding(FMargin(2.0, 2.0))
+							.OnClicked(FOnClicked::CreateLambda([=]() -> FReply {
+							OnClearBtnClicked();
+							return FReply::Handled();
+							}))	
+						]
+					
+                         + SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Left).AutoWidth()
+                         [
+                             SNew(SButton)
+                             .Text(FText::FromName("Forced GC"))
+                             .ContentPadding(FMargin(2.0, 2.0))
+                             .OnClicked(FOnClicked::CreateLambda([=]() -> FReply {
+                                 FArrayWriter messageWriter;
+                                 int bytesSend = 0;
+                                 int hookEvent = NS_SLUA::ProfilerHookEvent::PHE_MEMORY_GC;
+                                 int connectionsSize = ProfileServer->GetConnections().Num();
+                                 
+                                 messageWriter.Empty();
+                                 messageWriter.Seek(0);
+                                 messageWriter << hookEvent;
+                                 
+                                 if(connectionsSize > 0)
+                                 {
+                                     FSocket* socket = ProfileServer->GetConnections()[0]->GetSocket();
+                                     if (socket && socket->GetConnectionState() == SCS_Connected)
+                                         socket->Send(messageWriter.GetData(), messageWriter.Num(), bytesSend);
+                                 }
+                             
+                                 return FReply::Handled();
+                             }))
+                         ]
+					]
+
+					+ SVerticalBox::Slot().AutoHeight()
+					[
+						SNew(SHorizontalBox)
+						+ SHorizontalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Fill)
+						[
+							memProfilerWidget.ToSharedRef()
+						]
+					]
+
+					+ SVerticalBox::Slot().AutoHeight()
+					[
+						SNew(SVerticalBox)
+						+SVerticalBox::Slot()
+						.Padding(0, 1.0f)
+						.HAlign(EHorizontalAlignment::HAlign_Fill)
+						.MaxHeight(1.0f)
+						[
+							SNew(SBorder)
+							.BorderImage(FEditorStyle::GetBrush("ProgressBar.ThinBackground"))
+						]
+					]
+
+					+ SVerticalBox::Slot()
+                    [
+                        SNew(SScrollBox)
+                        +SScrollBox::Slot()
+                        [
+                            SNew(SVerticalBox)
+                            + SVerticalBox::Slot().HAlign(EHorizontalAlignment::HAlign_Center).Padding(0, 10.0f)
+                            [
+                                SNew(STextBlock).Text_Lambda([=]() {
+                                FString titleStr = TEXT("============================ Memory profiler Max("
+                                                 + ChooseMemoryUnit(maxLuaMemory)
+                                                 +"), Avg("
+                                                 + ChooseMemoryUnit(avgLuaMemory)
+                                                 +") ============================");
+                                return FText::FromString(titleStr);
+                                })
+                            ]
+                        ]
+
+                        + SScrollBox::Slot()
+                        [
+                            memTreeView.ToSharedRef()
+                        ]
+                    ]
+                ]
+            ]
+        ]
+	];
 }
 
 void SProfilerInspector::SortProfiler(SluaProfiler &rootProfiler)
 {
 	rootProfiler.Sort([](const TSharedPtr<FunctionProfileInfo>& LHS, const TSharedPtr<FunctionProfileInfo>& RHS)
-	{ 
-		if (LHS->mergedCostTime == RHS->mergedCostTime)
-		{
-			return LHS->globalIdx < RHS->globalIdx;
-		}
-		else
-		{
-			return LHS->mergedCostTime > RHS->mergedCostTime;
-		}
-	});
+					  {
+						  if (LHS->mergedCostTime == RHS->mergedCostTime)
+						  {
+							  return LHS->globalIdx < RHS->globalIdx;
+						  }
+						  else
+						  {
+							  return LHS->mergedCostTime > RHS->mergedCostTime;
+						  }
+					  });
 
 	SluaProfiler duplictedNodeArray;
 	for (int idx = 0; idx < rootProfiler.Num(); idx++)//(auto &funcNode : rootProfiler)
@@ -573,47 +950,118 @@ TSharedRef<ITableRow> SProfilerInspector::OnGenerateRowForList(TSharedPtr<Functi
 	}
 
 	return
-		SNew(STableRow< TSharedPtr<FString> >, OwnerTable)
-		.Padding(2.0f).Visibility_Lambda([=]() {
-			if (Item->functionName.IsEmpty() || Item->beMerged == true || shownProfiler[Item->globalIdx]->beMerged == true)
-				return EVisibility::Hidden;
-			else
-				return EVisibility::Visible;
-			})
-		[
-			SNew(SHeaderRow)
-			+ SHeaderRow::Column("Overview").DefaultLabel(TAttribute<FText>::Create([=]() {
-								if (shownProfiler.Num() > Item->globalIdx)
-								{
-									return FText::FromString(shownProfiler[Item->globalIdx]->brevName);
-								}
-								return FText::FromString("");								
-							}))
-							.FixedWidth(rowWidth).DefaultTooltip(TAttribute<FText>::Create([=]() {
-								if (shownProfiler.Num() > Item->globalIdx)
-								{
-									return FText::FromString(shownProfiler[Item->globalIdx]->functionName);
-								}
-								return FText::FromString("");
-							}))
-			+ SHeaderRow::Column("Time ms").DefaultLabel(TAttribute<FText>::Create([=]() {
-								if (shownProfiler.Num() > Item->globalIdx)
-								{
-									return FText::AsNumber(shownProfiler[Item->globalIdx]->mergedCostTime / perMilliSec);
-								}
-								return FText::FromString("");
-							}))
-							.FixedWidth(fixRowWidth)
-			+ SHeaderRow::Column("Calls").DefaultLabel(TAttribute<FText>::Create([=]() {
-								if (shownProfiler.Num() > Item->globalIdx)
-								{
-									return FText::AsNumber(shownProfiler[Item->globalIdx]->mergedNum);
-								}
-								return FText::FromString("");
-								
-							}))
-							.FixedWidth(fixRowWidth)
-		];
+	SNew(STableRow< TSharedPtr<FString> >, OwnerTable)
+	.Padding(2.0f).Visibility_Lambda([=]() {
+		if (Item->functionName.IsEmpty() || Item->beMerged == true || shownProfiler[Item->globalIdx]->beMerged == true)
+			return EVisibility::Hidden;
+		else
+			return EVisibility::Visible;
+	})
+	[
+	 SNew(SHeaderRow)
+	 + SHeaderRow::Column("Overview").DefaultLabel(TAttribute<FText>::Create([=]() {
+		if (shownProfiler.Num() > Item->globalIdx)
+		{
+			return FText::FromString(shownProfiler[Item->globalIdx]->brevName);
+		}
+		return FText::FromString("");
+	}))
+	 .FixedWidth(rowWidth).DefaultTooltip(TAttribute<FText>::Create([=]() {
+		if (shownProfiler.Num() > Item->globalIdx)
+		{
+			return FText::FromString(shownProfiler[Item->globalIdx]->functionName);
+		}
+		return FText::FromString("");
+	}))
+	 + SHeaderRow::Column("Time ms").DefaultLabel(TAttribute<FText>::Create([=]() {
+		if (shownProfiler.Num() > Item->globalIdx)
+		{
+			return FText::AsNumber(shownProfiler[Item->globalIdx]->mergedCostTime / perMilliSec);
+		}
+		return FText::FromString("");
+	}))
+	 .FixedWidth(fixRowWidth)
+	 + SHeaderRow::Column("Calls").DefaultLabel(TAttribute<FText>::Create([=]() {
+		if (shownProfiler.Num() > Item->globalIdx)
+		{
+			return FText::AsNumber(shownProfiler[Item->globalIdx]->mergedNum);
+		}
+		return FText::FromString("");
+
+	}))
+	 .FixedWidth(fixRowWidth)
+	 ];
+}
+
+
+TSharedRef<ITableRow> SProfilerInspector::OnGenerateMemRowForList(TSharedPtr<FileMemInfo> Item, const TSharedRef<STableViewBase>& OwnerTable)
+{
+    FText difference;
+    FLinearColor linearColor;
+    
+    if(Item->lineNumber.Equals("-1", ESearchCase::CaseSensitive))
+        difference = FText::FromString("");
+    else
+        difference = FText::FromString(ChooseMemoryUnit(Item->difference / 1024.0));
+    
+    if (Item->difference > 0) {
+        linearColor = FLinearColor(1, 0, 0, 1);
+    } else if (Item->difference < 0) {
+        linearColor = FLinearColor(0, 1, 0, 1);
+    } else {
+        linearColor = FLinearColor(1, 1, 1, 1);
+    }
+    
+	return
+	SNew(STableRow<TSharedPtr<FString>>, OwnerTable)
+	.Padding(2.0f)
+	[
+         SNew(SHeaderRow)
+         + SHeaderRow::Column("Overview").DefaultLabel(TAttribute<FText>::Create([=]() {
+            if (!Item->hint.IsEmpty())
+            {
+                FString fileNameInfo;
+                
+                if(Item->lineNumber.Equals("-1", ESearchCase::CaseSensitive))
+                    fileNameInfo = Item->hint;
+                else
+                    fileNameInfo = Item->hint + ":" + Item->lineNumber;
+                return FText::FromString(fileNameInfo);
+            }
+            return FText::FromString("");
+        }))
+         .FixedWidth(fixRowWidth)
+
+         + SHeaderRow::Column("Memory Size").DefaultLabel(TAttribute<FText>::Create([=]() {
+            if (Item->size >= 0)
+            {
+                if(Item->lineNumber.Equals("-1", ESearchCase::CaseSensitive))
+                    return FText::FromString("");
+                else
+                    return FText::FromString(ChooseMemoryUnit(Item->size / 1024.0));
+            }
+            return FText::FromString("");
+        }))
+         .FixedWidth(fixRowWidth)
+     
+         + SHeaderRow::Column("Compare Two Point")
+         .FixedWidth(fixRowWidth)
+         [
+              SNew(STextBlock)
+              .Text(difference)
+              .ColorAndOpacity(linearColor)
+         ]
+	 ];
+}
+
+void SProfilerInspector::OnGetMemChildrenForTree(TSharedPtr<FileMemInfo> Parent, TArray<TSharedPtr<FileMemInfo>>& OutChildren)
+{
+    if(!Parent->lineNumber.Equals("-1", ESearchCase::CaseSensitive)) return;
+    for(auto &item : shownFileInfo)
+    {
+        if(Parent->hint.Equals(item->hint, ESearchCase::CaseSensitive))
+            OutChildren.Add(item);
+    }
 }
 
 void SProfilerInspector::OnGetChildrenForTree(TSharedPtr<FunctionProfileInfo> Parent, TArray<TSharedPtr<FunctionProfileInfo>>& OutChildren)
@@ -651,7 +1099,7 @@ void SProfilerInspector::OnGetChildrenForTree(TSharedPtr<FunctionProfileInfo> Pa
 		}
 
 		// show the sibling node which has child nodes
-		for (size_t mergeIdx = 0; mergeIdx <  Parent->mergeIdxArray.Num(); mergeIdx++)
+		for (size_t mergeIdx = 0; mergeIdx < (size_t)(Parent->mergeIdxArray.Num()); mergeIdx++)
 		{
 			int pointIdx = Parent->mergeIdxArray[mergeIdx] + 1;
 			while (pointIdx < shownProfiler.Num() && shownProfiler[pointIdx]->layerIdx > Parent->layerIdx)
@@ -668,7 +1116,7 @@ void SProfilerInspector::OnGetChildrenForTree(TSharedPtr<FunctionProfileInfo> Pa
 
 		// sort array by cost time and add to OutChildren
 		unSortedChildrenArray.Sort([](const TSharedPtr<FunctionProfileInfo>& LHS, const TSharedPtr<FunctionProfileInfo>& RHS)
-								{ return LHS->mergedCostTime > RHS->mergedCostTime; });
+								   { return LHS->mergedCostTime > RHS->mergedCostTime; });
 
 		for (int idx=0; idx<unSortedChildrenArray.Num(); idx++)
 			OutChildren.Add(unSortedChildrenArray[idx]);
@@ -695,7 +1143,7 @@ void SProfilerInspector::MergeSiblingNode(SluaProfiler &profiler, int begIdx, in
 	{
 		return;
 	}
-	for (size_t idx = mergeArrayIdx; idx<parentMergeArray.Num(); idx++)
+	for (size_t idx = mergeArrayIdx; idx < (size_t)parentMergeArray.Num(); idx++)
 	{
 		pointIdx = parentMergeArray[idx] + 1;
 		SearchSiblingNode(profiler, pointIdx, endIdx, node);
@@ -718,9 +1166,192 @@ void SProfilerInspector::SearchSiblingNode(SluaProfiler& profiler, int curIdx, i
 	}
 }
 
+void SProfilerInspector::CollectMemoryNode(TArray<NS_SLUA::LuaMemInfo> memoryInfoList)
+{
+	luaTotalMemSize = 0;
+	ProflierMemNode memNode;
+	for(auto& memFileInfo : memoryInfoList)
+	{
+        TArray<FString> fileInfoList = SplitFlieName(memFileInfo.hint);
+		FString fileName = fileInfoList[0];
+        
+        // if the record file have file name and line number, the return array should have two item.
+        if(fileInfoList.Num() < 2 || fileName.Contains(TEXT("ProfilerScript"), ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+		{
+			continue;
+		}
+        luaTotalMemSize += memFileInfo.size;
+        FileMemInfo fileInfo;
+        fileInfo.hint = fileName;
+        fileInfo.lineNumber = fileInfoList[1];
+        fileInfo.size = memFileInfo.size;
+        memNode.infoList.Add(fileInfo);
+	}
+    //luaTotalMemSize unit changed from byte to KB
+	luaTotalMemSize /= 1024.0f;
+    memNode.totalSize = luaTotalMemSize;
+	luaMemNodeChartList.Add(memNode);
+    luaMemNodeChartList.RemoveAt(0);
+}
+
+void SProfilerInspector::CombineSameFileInfo(MemFileInfoList& infoList)
+{
+	shownFileInfo.Empty();
+    shownParentFileName.Empty();
+    for(auto& fileInfo : infoList)
+    {
+        FString fileHint = fileInfo.hint;
+        int index = ContainsFile(fileHint.Append(fileInfo.lineNumber), shownFileInfo);
+        if(index >= 0)
+        {
+            shownFileInfo[index]->size += fileInfo.size;
+        }
+        else
+        {
+            FileMemInfo *info = new FileMemInfo();
+            info->hint = fileInfo.hint;
+            info->lineNumber = fileInfo.lineNumber;
+            info->size = fileInfo.size;
+            shownFileInfo.Add(MakeShareable(info));
+            
+            fileHint = fileInfo.hint;
+            
+            if(ContainsFile(fileHint.Append("-1"), shownParentFileName) < 0)
+            {
+                FileMemInfo *fileParent = new FileMemInfo();
+                fileParent->hint = fileInfo.hint;
+                fileParent->lineNumber = "-1";
+                shownParentFileName.Add(MakeShareable(fileParent));
+            }
+        }
+    }
+    
+    SortShownInfo();
+}
+
+void ExchangeMemInfoNode(ShownMemInfoList& list, int originIndx, int newIndex)
+{
+    list[originIndx]->size = list[newIndex]->size;
+    list[originIndx]->hint = list[newIndex]->hint;
+    list[originIndx]->lineNumber = list[newIndex]->lineNumber;
+}
+
+void SortMemInfo(ShownMemInfoList& list, int beginIndex, int endIndex)
+{
+    if (beginIndex < endIndex)
+    {
+        int left = beginIndex,right = endIndex;
+        if(left >= right) return ;
+        int key = list[left]->size;
+        FString keyHint = list[left]->hint;
+        FString keyLineNumber = list[left]->lineNumber;
+        
+        while(left<right)
+        {
+            while(list[right]->size<=key && left<right) right--;
+            ExchangeMemInfoNode(list, left, right);
+            
+            while(list[left]->size>=key && left<right) left++;
+            ExchangeMemInfoNode(list, right, left);
+        }
+        list[left]->size = key;
+        list[left]->hint = keyHint;
+        list[left]->lineNumber = keyLineNumber;
+        
+        SortMemInfo(list, beginIndex, left - 1);
+        SortMemInfo(list, left + 1, endIndex);
+    }
+}
+
+void SProfilerInspector::SortShownInfo()
+{
+    SortMemInfo(shownFileInfo, 0, shownFileInfo.Num()-1);
+}
+
+void SProfilerInspector::CalcPointMemdiff(int beginIndex, int endIndex)
+{
+    // Always use new record of memory as the compareing data;
+    if(beginIndex > endIndex) {
+        int temp = beginIndex;
+        beginIndex = endIndex;
+        endIndex = temp;
+        
+        CombineSameFileInfo(tempLuaMemNodeChartList[endIndex].infoList);
+    }
+    
+    // initialize the difference in shownFileInfo to avoid the consequence that the item did not have the file record but the difference is 0
+    for(auto &info : shownFileInfo) info->difference = info->size;
+
+    for(auto &info : tempLuaMemNodeChartList[beginIndex].infoList)
+    {
+        FString fileHint = info.hint;
+
+        int index = ContainsFile(fileHint.Append(info.lineNumber), shownFileInfo);
+        if(index >= 0)
+        {
+            shownFileInfo[index].Get()->difference -= info.size;
+        }
+        else
+        {
+            FileMemInfo *newInfo = new FileMemInfo();
+            newInfo->hint = info.hint;
+            newInfo->size = 0.0f;
+            newInfo->lineNumber = info.lineNumber;
+            newInfo->difference -= info.size;
+            shownFileInfo.Add(MakeShareable(newInfo));
+        }
+    }
+    
+    float diff = 0.0f;
+    for(auto &info : shownFileInfo) diff += info->difference;
+    NS_SLUA::Log::Log("The difference between two Point is %.3f KB", diff/1024.0f);
+}
+
+int SProfilerInspector::ContainsFile(FString& fileName, ShownMemInfoList &list)
+{
+    int index = -1;
+    for(auto& fileInfo : list)
+    {
+        index ++;
+        
+        FString fileHint = fileInfo->hint;
+        if(fileName.Equals(fileHint.Append(fileInfo->lineNumber), ESearchCase::CaseSensitive)) return index;
+    }
+    index = -1;
+    return index;
+}
+
+FString SProfilerInspector::ChooseMemoryUnit(float memorySize)
+{
+	if (memorySize < 1024) return FString::Printf(TEXT("%.3f KB"), memorySize);
+	else if (memorySize >= 1024) return FString::Printf(TEXT("%.3f MB"), (memorySize / 1024.0f));
+	return FString::Printf(TEXT("%.3f"), memorySize);
+}
+
+TArray<FString> SProfilerInspector::SplitFlieName(FString filePath)
+{
+    TArray<FString> stringArray;
+    FString fileInfo;
+	filePath.ParseIntoArray(stringArray, TEXT("/"), false);
+
+    if(stringArray.Num() == 0)
+    {
+        stringArray.Add("");
+        return stringArray;
+    }
+    
+    fileInfo = stringArray[stringArray.Num() - 1];
+    stringArray.Empty();
+    fileInfo.ParseIntoArray(stringArray, TEXT(":"), false);
+    // to avoid the ProfilerScript case which does not have line number
+    if(stringArray.Num() == 0) stringArray.Add(fileInfo);
+    
+    return stringArray;
+}
+
 ////////////////////////////// SProfilerWidget //////////////////////////////
 
-void SProfilerWidget::SetArrayValue(TArray<float>& chartValArray, float maxCostTime)
+void SProfilerWidget::SetArrayValue(TArray<float>& chartValArray, float maxCostTime, float maxMemSize)
 {
 	m_arrayVal = chartValArray;
 	if (m_arrayVal.Num() == 0)
@@ -728,30 +1359,47 @@ void SProfilerWidget::SetArrayValue(TArray<float>& chartValArray, float maxCostT
 		// clear line points
 		for (int32 i = 0; i < m_cSliceCount; i++)
 		{
-			FVector2D NewPoint(-1, -1);
-			m_arraylinePath[i] = NewPoint;
+			m_arraylinePath[i].Set(-1, -1);
 		}
 	}
 	m_maxCostTime = maxCostTime;
+    m_maxMemSize = maxMemSize;
+}
+
+void SProfilerWidget::SetMouseMovePoint(FVector2D mouseDownPoint)
+{
+    m_mouseDownPoint = mouseDownPoint;
+}
+
+void SProfilerWidget::SetMouseClickPoint(FVector2D mouseClickPoint)
+{
+    m_clickedPoint = mouseClickPoint;
 }
 
 void SProfilerWidget::Construct(const FArguments& InArgs)
 {
 	m_arraylinePath.SetNumUninitialized(m_cSliceCount);
+    m_memStdScale = 1;
+    m_pathArrayNum = 0;
+    m_maxMemSize = 0.0f;
 	m_maxCostTime = 0.0f;
 	m_pointInterval = 0.0f;
 	m_clickedPoint.X = -1.0f;
 	m_toolTipVal = -1.0f;
 	m_widgetWidth = 0.0f;
+    m_mouseDownPoint = FVector2D(-1.0f, 0.0f);
+	m_stdLineVisibility = InArgs._StdLineVisibility;
 
-	float maxPointValue = 40 * 1000.f; // set max value as 40ms
-	float stdLineValue = 16 * 1000.f;
-	FString stdLineName = "16ms(60FPS)";
-	AddStdLine(maxPointValue, stdLineValue, stdLineName);
+    float maxPointValue = 40 * 1000.f; // set max value as 40ms
+    float stdLineValue = 16 * 1000.f;
+    FString stdLineName = "16ms(60FPS)";
+    AddStdLine(maxPointValue, stdLineValue, stdLineName);
 
-	stdLineValue = 33 * 1000.f;
-	stdLineName = "33ms(30FPS)";
-	AddStdLine(maxPointValue, stdLineValue, stdLineName);
+    stdLineValue = 33 * 1000.f;
+    stdLineName = "33ms(30FPS)";
+    AddStdLine(maxPointValue, stdLineValue, stdLineName);
+    
+    CalcMemStdText(m_maxMemSize);
 
 	SetToolTipText(TAttribute<FText>::Create([=]() {
 		if (m_toolTipVal < 0)
@@ -768,28 +1416,31 @@ void SProfilerWidget::SetToolTipVal(float val)
 
 FVector2D SProfilerWidget::ComputeDesiredSize(float size) const
 {
-	return FVector2D(m_widgetWidth, 220);
+	return FVector2D(m_widgetWidth, cMaxViewHeight);
 }
 
 void SProfilerWidget::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
 {
 	m_widgetWidth = AllottedGeometry.Size.X;
+    m_pathArrayNum = 0;
 
 	if (m_arrayVal.Num() == 0)
 	{
 		return;
 	}
 
-	static float maxVal = 10 * 1000;
-	static float highVal = 200;
-
 	// calc standard line level accroding to max cost time
 	m_stdPositionY.Empty();
 	m_stdStr.Empty();
-	if (m_maxCostTime > 0)
+
+	if (m_maxCostTime > 0 && m_stdLineVisibility.Get() == EVisibility::Visible)
 	{
 		CalcStdLine(m_maxCostTime);
-	}
+    }
+    else if (m_maxMemSize > 0 && m_stdLineVisibility.Get() != EVisibility::Visible)
+    {
+        CalcMemStdText(m_maxMemSize);
+    }
 
 	for (int32 i = 0; i < m_cSliceCount; i++)
 	{
@@ -798,22 +1449,42 @@ void SProfilerWidget::Tick(const FGeometry& AllottedGeometry, const double InCur
 			FVector2D NewPoint(-1, -1);
 			m_arraylinePath[i] = NewPoint;
 		}
-		else
+		else if(m_stdLineVisibility.Get() == EVisibility::Visible)
 		{
 			float yValue = 0;
-			
+
 			if (m_maxCostTime != 0.0f)
 			{
-				yValue = highVal * (m_arrayVal[i] / maxVal);
+				yValue = cMaxViewHeight * (m_arrayVal[i] / m_maxPointHeight);
 			}
-			if (yValue > highVal)
+			if (yValue > cMaxViewHeight)
 			{
 				FVector2D NewPoint((5 * i + m_cStdLeftPosition) * (m_widgetWidth / m_cStdWidth), 0);
 				m_arraylinePath[i] = NewPoint;
 			}
 			else
 			{
-				FVector2D NewPoint((5 * i + m_cStdLeftPosition) * (m_widgetWidth / m_cStdWidth), highVal - yValue);
+				FVector2D NewPoint((5 * i + m_cStdLeftPosition) * (m_widgetWidth / m_cStdWidth), cMaxViewHeight - yValue);
+				m_arraylinePath[i] = NewPoint;
+			}
+		}
+		else if(m_stdLineVisibility.Get() != EVisibility::Visible)
+		{
+			float yValue = 0;
+            
+			if (m_maxCostTime != 0.0f)
+			{
+				yValue = cMaxViewHeight * (m_arrayVal[i] / (1024 * m_memStdScale));
+			}
+			if (yValue > cMaxViewHeight)
+			{
+				FVector2D NewPoint((5 * i + m_cStdLeftPosition) * (m_widgetWidth / m_cStdWidth), 0);
+				m_arraylinePath[i] = NewPoint;
+			}
+			else
+			{
+                if(m_pathArrayNum < m_cSliceCount && cMaxViewHeight - yValue != -1.0f)m_pathArrayNum ++;
+				FVector2D NewPoint((5 * i + m_cStdLeftPosition) * (m_widgetWidth / m_cStdWidth), cMaxViewHeight - yValue);
 				m_arraylinePath[i] = NewPoint;
 			}
 		}
@@ -840,24 +1511,75 @@ int SProfilerWidget::CalcHoverSampleIdx(const FVector2D cursorPos)
 	return -1;
 }
 
-int SProfilerWidget::CalcClickSampleIdx(const FVector2D cursorPos)
+void SProfilerWidget::ClearClickedPoint()
+{
+	m_clickedPoint.X = -1.0f;
+    m_mouseDownPoint.X = -1.0f;
+}
+
+int SProfilerWidget::CalcClickSampleIdx(FVector2D &cursorPos)
 {
 	for (int32 i = 0; i< m_cSliceCount; i++)
 	{
 		int interval = m_arraylinePath[i].X - cursorPos.X;
 		if (interval > (-m_pointInterval / 2) && interval < (m_pointInterval / 2))
 		{
-			m_clickedPoint = m_arraylinePath[i];
+			cursorPos = m_arraylinePath[i];
 			return i;
 		}
 	}
 
-	return -1;
+    // check if the point is in front of the chart
+    if(m_pathArrayNum != 0 && m_arraylinePath[m_arraylinePath.Num() - m_pathArrayNum].X > cursorPos.X)
+    {
+        cursorPos = m_arraylinePath[m_arraylinePath.Num() - m_pathArrayNum];
+        return m_arraylinePath.Num() - m_pathArrayNum;
+    }
+    // check if the point is behind the chart
+    else if(m_pathArrayNum != 0 && m_arraylinePath[m_arraylinePath.Num() - 1].X < cursorPos.X){
+        cursorPos = m_arraylinePath[m_arraylinePath.Num() - 1];
+        return m_arraylinePath.Num() - 1;
+    }
+    // no chart in the profiler
+    cursorPos.X = -1.0f;
+    cursorPos.Y = -1.0f;
+    return -1;
 }
 
-void SProfilerWidget::ClearClickedPoint()
+void SProfilerWidget::CalcMemStdText(float &maxMemorySize)
 {
-	m_clickedPoint.X = -1.0f;
+    m_stdMemStr.Empty();
+    
+    if(maxMemorySize < 1024)
+    {
+        m_memStdScale = 1;
+        m_stdMemStr.Add("512 KB");
+        m_stdMemStr.Add("1  MB");
+    }
+    else if (maxMemorySize < (1024 * 2))
+    {
+        m_memStdScale = 2;
+        m_stdMemStr.Add("1 MB");
+        m_stdMemStr.Add("2 MB");
+    }
+    else if (maxMemorySize < (1024 * 10))
+    {
+        m_memStdScale = 10;
+        m_stdMemStr.Add("5 MB");
+        m_stdMemStr.Add("10 MB");
+    }
+    else if (maxMemorySize < (1024 * 100))
+    {
+        m_memStdScale = 100;
+        m_stdMemStr.Add("50 MB");
+        m_stdMemStr.Add("100 MB");
+    }
+    else if (maxMemorySize < (1024 * 1024))
+    {
+        m_memStdScale = 1024;
+        m_stdMemStr.Add("512 MB");
+        m_stdMemStr.Add("1  GB");
+    }
 }
 
 void SProfilerWidget::DrawStdLine(const FGeometry& AllottedGeometry, FSlateWindowElementList& OutDrawElements, int32 LayerId, float positionY, FString stdStr) const
@@ -866,95 +1588,95 @@ void SProfilerWidget::DrawStdLine(const FGeometry& AllottedGeometry, FSlateWindo
 	valLineArray.Add(FVector2D(30, positionY));
 	valLineArray.Add(FVector2D(m_widgetWidth, positionY));
 	FSlateDrawElement::MakeLines(
-		OutDrawElements,
-		LayerId,
-		AllottedGeometry.ToPaintGeometry(),
-		valLineArray,
-		ESlateDrawEffect::None,
-		FLinearColor::White,
-		true,
-		1.0f
-	);
+					 OutDrawElements,
+					 LayerId,
+					 AllottedGeometry.ToPaintGeometry(),
+					 valLineArray,
+					 ESlateDrawEffect::None,
+					 FLinearColor::White,
+					 true,
+					 1.0f
+					);
 
-	FSlateColorBrush stBrushWhite_1 = FSlateColorBrush(FColorList::White);
-	FSlateDrawElement::MakeBox(
-		OutDrawElements,
-		LayerId,
-		AllottedGeometry.ToPaintGeometry(FVector2D(0, positionY - 10), FVector2D(80, 15)),
-		&stBrushWhite_1,
-		ESlateDrawEffect::None,
-		FLinearColor::Black
-	);
+//    FSlateColorBrush stBrushWhite_1 = FSlateColorBrush(FColorList::White);
+//    FSlateDrawElement::MakeBox(
+//                    OutDrawElements,
+//                    LayerId,
+//                    AllottedGeometry.ToPaintGeometry(FVector2D(0, positionY - 10), FVector2D(80, 15)),
+//                    &stBrushWhite_1,
+//                    ESlateDrawEffect::None,
+//                    FLinearColor::Black
+//                    );
 
 	FSlateFontInfo FontInfo = FCoreStyle::Get().GetFontStyle("NormalFont");
 	FontInfo.Size = 10.0f;
 
 	FSlateDrawElement::MakeText(
-		OutDrawElements,
-		LayerId,
-		AllottedGeometry.ToPaintGeometry(FVector2D(0, positionY - 10), AllottedGeometry.Size),
-		stdStr,
-		FontInfo,
-		ESlateDrawEffect::None,
-		FLinearColor::White
-	);
+					OutDrawElements,
+					LayerId,
+					AllottedGeometry.ToPaintGeometry(FVector2D(0, positionY - 10), AllottedGeometry.Size),
+					stdStr,
+					FontInfo,
+					ESlateDrawEffect::None,
+					FLinearColor::White
+					);
 }
 
 void SProfilerWidget::CalcStdLine(float &maxCostTime)
 {
 	if (maxCostTime < 6000)
 	{
-		float maxPointValue = 7 * 1000.f;
+		m_maxPointHeight = 7 * 1000.f;
 		float stdLineValue = 1 * 1000.f;
 		FString stdLineName = "1ms(1000FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 
 		stdLineValue = 4 * 1000.f;
 		stdLineName = "4ms(250FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 	}
 	else if (maxCostTime < 14000)
 	{
-		float maxPointValue = 15 * 1000.f;
+		m_maxPointHeight = 15 * 1000.f;
 		float stdLineValue = 5 * 1000.f;
 		FString stdLineName = "5ms(200FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 
 		stdLineValue = 10 * 1000.f;
 		stdLineName = "10ms(100FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 	}
 	else if (maxCostTime < 30000)
 	{
-		float maxPointValue = 40 * 1000.f;
+		m_maxPointHeight = 40 * 1000.f;
 		float stdLineValue = 16 * 1000.f;
 		FString stdLineName = "16ms(60FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 
 		stdLineValue = 33 * 1000.f;
 		stdLineName = "33ms(30FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 	}
 	else
 	{
-		float maxPointValue = 70 * 1000.f;
+		m_maxPointHeight = 70 * 1000.f;
 		float stdLineValue = 16 * 1000.f;
 		FString stdLineName = "16ms(60FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 
 		stdLineValue = 33 * 1000.f;
 		stdLineName = "33ms(30FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 
 		stdLineValue = 66 * 1000.f;
 		stdLineName = "66ms(15FPS)";
-		AddStdLine(maxPointValue, stdLineValue, stdLineName);
+		AddStdLine(m_maxPointHeight, stdLineValue, stdLineName);
 	}
 }
 
 void SProfilerWidget::AddStdLine(float &maxPointValue, float &stdLineValue, FString &stdLineName)
 {
-	float positionY = m_cStdHighVal - m_cStdHighVal / maxPointValue * stdLineValue;
+	float positionY = m_cStdHighVal - m_cStdHighVal * (stdLineValue / maxPointValue);
 	m_stdPositionY.Add(positionY);
 	m_stdStr.Add(stdLineName);
 }
@@ -965,23 +1687,95 @@ int32 SProfilerWidget::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 	{
 		TArray<FVector2D> clickedPointArray;
 		clickedPointArray.Add(FVector2D(m_clickedPoint.X, 0));
-		clickedPointArray.Add(FVector2D(m_clickedPoint.X, 200));
+		clickedPointArray.Add(FVector2D(m_clickedPoint.X, cMaxViewHeight));
 		FSlateDrawElement::MakeLines(
-			OutDrawElements,
-			LayerId,
-			AllottedGeometry.ToPaintGeometry(),
-			clickedPointArray,
-			ESlateDrawEffect::None,
-			FLinearColor::White,
-			true,
-			6.0f
-		);
+						 OutDrawElements,
+						 LayerId,
+						 AllottedGeometry.ToPaintGeometry(),
+						 clickedPointArray,
+						 ESlateDrawEffect::None,
+						 FLinearColor::White,
+						 true,
+						 2.0f
+						);
 	}
 
 	// draw std value line
-	for (int32 i = 0; i < m_stdStr.Num(); i++)
+	if (m_stdLineVisibility.Get() == EVisibility::Visible)
 	{
-		DrawStdLine(AllottedGeometry, OutDrawElements, LayerId, m_stdPositionY[i], m_stdStr[i]);
+		for (int32 i = 0; i < m_stdStr.Num(); i++)
+		{
+			DrawStdLine(AllottedGeometry, OutDrawElements, LayerId, m_stdPositionY[i], m_stdStr[i]);
+		}
+	}
+    else
+    {
+        FSlateFontInfo FontInfo = FCoreStyle::Get().GetFontStyle("NormalFont");
+        FontInfo.Size = 9.0f;
+        
+        FSlateDrawElement::MakeText(
+                                    OutDrawElements,
+                                    LayerId,
+                                    AllottedGeometry.ToPaintGeometry(FVector2D(0, 95.0f), AllottedGeometry.Size),
+                                    m_stdMemStr[0] + TEXT(" —"),
+                                    FontInfo,
+                                    ESlateDrawEffect::None,
+                                    FLinearColor::White
+                                    );
+        
+        FSlateDrawElement::MakeText(
+                                    OutDrawElements,
+                                    LayerId,
+                                    AllottedGeometry.ToPaintGeometry(FVector2D(0, 0), AllottedGeometry.Size),
+                                    m_stdMemStr[1],
+                                    FontInfo,
+                                    ESlateDrawEffect::None,
+                                    FLinearColor::White
+                                    );
+        
+        float chartMaxPosition = (m_arraylinePath.Num() * 5 + m_cStdLeftPosition) * (m_widgetWidth / m_cStdWidth);
+        if(m_mouseDownPoint.X != m_clickedPoint.X
+           &&m_clickedPoint.X != -1.0f && m_mouseDownPoint.X != -1.0f
+           && m_clickedPoint.X <= chartMaxPosition && m_mouseDownPoint.X <= chartMaxPosition)
+        {
+            // draw the selected area between the position from mouse up and down
+            FLinearColor boxColor;
+            FVector2D boxBeginPoint;
+            TArray<FVector2D> clickedPointArray;
+            
+            FSlateColorBrush stBrushWhite_1 = FSlateColorBrush(FColorList::White);
+            float length = FGenericPlatformMath::Abs(m_clickedPoint.X - m_mouseDownPoint.X);
+            
+            boxColor.R = 0.0f;
+            boxColor.G = 1.0f;
+            boxColor.B = 1.0f;
+            boxColor.A = 0.2f;
+            
+            clickedPointArray.Add(FVector2D(m_mouseDownPoint.X, 0));
+            clickedPointArray.Add(FVector2D(m_mouseDownPoint.X, cMaxViewHeight));
+            
+            boxBeginPoint = FVector2D(FGenericPlatformMath::Abs(FGenericPlatformMath::Min(m_mouseDownPoint.X, m_clickedPoint.X)), 0.0f);
+            
+            FSlateDrawElement::MakeBox(
+                                       OutDrawElements,
+                                       LayerId,
+                                       AllottedGeometry.ToPaintGeometry(boxBeginPoint, FVector2D(length, cMaxViewHeight)),
+                                       &stBrushWhite_1,
+                                       ESlateDrawEffect::None,
+                                       boxColor
+                                       );
+            
+            FSlateDrawElement::MakeLines(
+                                         OutDrawElements,
+                                         LayerId,
+                                         AllottedGeometry.ToPaintGeometry(),
+                                         clickedPointArray,
+                                         ESlateDrawEffect::None,
+                                         FLinearColor::White,
+                                         true,
+                                         2.0f
+                                         );
+        }
 	}
 
 	if (m_arrayVal.Num() == 0)
@@ -1003,20 +1797,67 @@ int32 SProfilerWidget::OnPaint(const FPaintArgs& Args, const FGeometry& Allotted
 		circlePath.Add(leftPoint);
 		circlePath.Add(rightPoint);
 		FSlateDrawElement::MakeLines(
-			OutDrawElements,
-			LayerId,
-			AllottedGeometry.ToPaintGeometry(),
-			circlePath,
-			ESlateDrawEffect::None,
-			FLinearColor::Yellow,
-			true,
-			1.0f
-		);
+						 OutDrawElements,
+						 LayerId,
+						 AllottedGeometry.ToPaintGeometry(),
+						 circlePath,
+						 ESlateDrawEffect::None,
+						 FLinearColor::Yellow,
+						 true,
+						 1.0f
+						);
 	}
 
 	return LayerId;
 }
 
+void SProfilerWidget::SetStdLineVisibility(TAttribute<EVisibility> InVisibility)
+{
+	m_stdLineVisibility = InVisibility;
+}
 
 
+void SProfilerTabWidget::Construct(const FArguments& InArgs)
+{
+	ChildSlot
+	[
+		SNew(SButton)
+		.ContentPadding(-3)
+		.OnClicked(InArgs._OnClicked)
+		[
+			SNew(SBorder)
+			.HAlign(HAlign_Fill)
+			.VAlign(VAlign_Fill)
+			.BorderImage(FEditorStyle::GetBrush("ToolPanel.DarkGroupBorder"))
+			[
+				SNew(SVerticalBox)
+				+SVerticalBox::Slot()
+				.HAlign(HAlign_Fill)
+				.VAlign(VAlign_Fill)
+				.Padding(5.0f, 10.0f)
+				[	
+					SNew(SHorizontalBox)
+					+SHorizontalBox::Slot()
+					.HAlign(HAlign_Left)
+					.VAlign(VAlign_Top)
+					.AutoWidth()
+					[
+						SNew(SImage)
+						.Image(InArgs._TabIcon)
+				]
 
+					+SHorizontalBox::Slot()
+					.VAlign(VAlign_Top)
+					.HAlign(HAlign_Left)
+					.Padding(15.0f, 15.0f)
+					[
+						SNew(STextBlock)
+						.Font(FSlateFontInfo(FPaths::EngineContentDir() / TEXT("Slate/Fonts/Roboto-Bold.ttf"), 13))
+						.ColorAndOpacity(FLinearColor(1, 1, 1, 0.5))
+						.Text(InArgs._TabName)
+					]
+				]
+			]	
+		]
+	];
+}

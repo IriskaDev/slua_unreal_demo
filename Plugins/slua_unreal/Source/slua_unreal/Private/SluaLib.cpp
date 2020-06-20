@@ -33,6 +33,7 @@
 #endif
 #include "LuaMemoryProfile.h"
 #include "Runtime/Launch/Resources/Version.h"
+#include <chrono>
 
 namespace NS_SLUA {
 
@@ -41,6 +42,9 @@ namespace NS_SLUA {
         RegMetaMethod(L, loadUI);
         RegMetaMethod(L, createDelegate);
 		RegMetaMethod(L, loadClass);
+		RegMetaMethod(L, setTickFunction);
+		RegMetaMethod(L, getMicroseconds);
+		RegMetaMethod(L, getMiliseconds);
 		RegMetaMethod(L, dumpUObjects);
 		RegMetaMethod(L, loadObject);
 		RegMetaMethod(L, threadGC);
@@ -155,6 +159,30 @@ namespace NS_SLUA {
         obj->bindFunction(L,1);
         return LuaObject::push(L,obj);
     }
+
+	int SluaUtil::setTickFunction(lua_State* L)
+	{
+		LuaVar func(L, 1, LuaVar::LV_FUNCTION);
+
+		LuaState* luaState = LuaState::get(L);
+		luaState->setTickFunction(func);
+		return 0;
+	}
+
+	int SluaUtil::getMicroseconds(lua_State* L)
+	{
+		int64_t nanoSeconds = std::chrono::high_resolution_clock::now().time_since_epoch().count() / 1000;
+		lua_pushnumber(L, nanoSeconds);
+		return 1;
+	}
+
+	int SluaUtil::getMiliseconds(lua_State* L)
+	{
+		int64_t nanoSeconds = std::chrono::high_resolution_clock::now().time_since_epoch().count() / 1000000;
+		lua_pushnumber(L, nanoSeconds);
+		return 1;
+	}
+
 	int SluaUtil::dumpUObjects(lua_State * L)
 	{
 		auto state = LuaState::get(L);
@@ -177,8 +205,8 @@ namespace NS_SLUA {
 			return LuaObject::push(L, isValid);
 		// if this ud is boxed UObject
 		if (gud->flag & UD_UOBJECT) {
-			UObject* obj = LuaObject::checkUD<UObject>(L, 1);
-			isValid = IsValid(obj);
+			UObject* obj = LuaObject::checkUD<UObject>(L, 1, false);
+			isValid = LuaObject::isUObjectValid(obj);
 		}
 		else if (gud->flag&UD_WEAKUPTR) {
 			UserData<WeakUObjectUD*>* wud = (UserData<WeakUObjectUD*>*)gud;

@@ -21,7 +21,7 @@ public:
 	int ClearAllTimers();
 
 private:
-	slua::LuaState _state;
+	slua::LuaState * _state;
 	UMyGameInstance * _instance;
 	bool _initialized;
 	TMap<int, FTimerHandle> _timers;

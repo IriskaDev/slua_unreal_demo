@@ -13,6 +13,7 @@
 
 #include "LuaWrapper.h"
 #include "LuaObject.h"
+#include "Runtime/Launch/Resources/Version.h"
 
 namespace NS_SLUA {
 
@@ -38,9 +39,10 @@ namespace NS_SLUA {
 	static UScriptStruct* FInt32IntervalStruct = nullptr;
 	static UScriptStruct* FPrimaryAssetTypeStruct = nullptr;
 	static UScriptStruct* FPrimaryAssetIdStruct = nullptr;
+	static UScriptStruct* FDateTimeStruct = nullptr;
 
-	typedef void(*pushStructFunction)(lua_State* L, UStructProperty* p, uint8* parms);
-	typedef void(*checkStructFunction)(lua_State* L, UStructProperty* p, uint8* parms, int i);
+	typedef void(*pushStructFunction)(lua_State* L, FStructProperty* p, uint8* parms);
+	typedef void(*checkStructFunction)(lua_State* L, FStructProperty* p, uint8* parms, int i);
 
 	TMap<UScriptStruct*, pushStructFunction> _pushStructMap;
 	TMap<UScriptStruct*, checkStructFunction> _checkStructMap;
@@ -49,14 +51,18 @@ namespace NS_SLUA {
 		return new FSlateFontInfo();
 	}
 
-	static void __pushFSlateFontInfo(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFSlateFontInfo(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFSlateFontInfo();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FSlateFontInfo>(L, "FSlateFontInfo", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFSlateFontInfo(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFSlateFontInfo(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FSlateFontInfo*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FSlateFontInfo nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -64,14 +70,18 @@ namespace NS_SLUA {
 		return new FSlateBrush();
 	}
 
-	static void __pushFSlateBrush(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFSlateBrush(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFSlateBrush();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FSlateBrush>(L, "FSlateBrush", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFSlateBrush(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFSlateBrush(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FSlateBrush*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FSlateBrush nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -79,14 +89,18 @@ namespace NS_SLUA {
 		return new FMargin();
 	}
 
-	static void __pushFMargin(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFMargin(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFMargin();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FMargin>(L, "FMargin", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFMargin(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFMargin(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FMargin*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FMargin nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -94,14 +108,18 @@ namespace NS_SLUA {
 		return new FGeometry();
 	}
 
-	static void __pushFGeometry(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFGeometry(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFGeometry();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FGeometry>(L, "FGeometry", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFGeometry(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFGeometry(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FGeometry*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FGeometry nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -109,14 +127,18 @@ namespace NS_SLUA {
 		return new FSlateColor();
 	}
 
-	static void __pushFSlateColor(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFSlateColor(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFSlateColor();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FSlateColor>(L, "FSlateColor", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFSlateColor(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFSlateColor(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FSlateColor*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FSlateColor nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -124,14 +146,18 @@ namespace NS_SLUA {
 		return new FRotator();
 	}
 
-	static void __pushFRotator(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFRotator(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFRotator();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FRotator>(L, "FRotator", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFRotator(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFRotator(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FRotator*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FRotator nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -139,14 +165,18 @@ namespace NS_SLUA {
 		return new FTransform();
 	}
 
-	static void __pushFTransform(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFTransform(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFTransform();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FTransform>(L, "FTransform", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFTransform(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFTransform(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FTransform*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FTransform nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -154,14 +184,18 @@ namespace NS_SLUA {
 		return new FLinearColor();
 	}
 
-	static void __pushFLinearColor(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFLinearColor(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFLinearColor();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FLinearColor>(L, "FLinearColor", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFLinearColor(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFLinearColor(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FLinearColor*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FLinearColor nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -169,14 +203,18 @@ namespace NS_SLUA {
 		return new FColor();
 	}
 
-	static void __pushFColor(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFColor(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFColor();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FColor>(L, "FColor", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFColor(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFColor(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FColor*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FColor nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -184,14 +222,18 @@ namespace NS_SLUA {
 		return new FVector();
 	}
 
-	static void __pushFVector(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFVector(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFVector();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FVector>(L, "FVector", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFVector(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFVector(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FVector*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FVector nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -199,14 +241,18 @@ namespace NS_SLUA {
 		return new FVector2D();
 	}
 
-	static void __pushFVector2D(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFVector2D(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFVector2D();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FVector2D>(L, "FVector2D", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFVector2D(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFVector2D(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FVector2D*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FVector2D nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -214,14 +260,18 @@ namespace NS_SLUA {
 		return new FRandomStream();
 	}
 
-	static void __pushFRandomStream(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFRandomStream(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFRandomStream();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FRandomStream>(L, "FRandomStream", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFRandomStream(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFRandomStream(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FRandomStream*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FRandomStream nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -229,14 +279,18 @@ namespace NS_SLUA {
 		return new FGuid();
 	}
 
-	static void __pushFGuid(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFGuid(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFGuid();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FGuid>(L, "FGuid", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFGuid(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFGuid(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FGuid*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FGuid nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -244,14 +298,18 @@ namespace NS_SLUA {
 		return new FBox2D();
 	}
 
-	static void __pushFBox2D(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFBox2D(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFBox2D();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FBox2D>(L, "FBox2D", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFBox2D(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFBox2D(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FBox2D*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FBox2D nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -259,14 +317,18 @@ namespace NS_SLUA {
 		return new FFloatRangeBound();
 	}
 
-	static void __pushFFloatRangeBound(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFFloatRangeBound(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFFloatRangeBound();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FFloatRangeBound>(L, "FFloatRangeBound", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFFloatRangeBound(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFFloatRangeBound(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FFloatRangeBound*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FFloatRangeBound nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -274,14 +336,18 @@ namespace NS_SLUA {
 		return new FFloatRange();
 	}
 
-	static void __pushFFloatRange(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFFloatRange(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFFloatRange();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FFloatRange>(L, "FFloatRange", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFFloatRange(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFFloatRange(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FFloatRange*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FFloatRange nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -289,14 +355,18 @@ namespace NS_SLUA {
 		return new FInt32RangeBound();
 	}
 
-	static void __pushFInt32RangeBound(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFInt32RangeBound(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFInt32RangeBound();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FInt32RangeBound>(L, "FInt32RangeBound", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFInt32RangeBound(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFInt32RangeBound(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FInt32RangeBound*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FInt32RangeBound nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -304,14 +374,18 @@ namespace NS_SLUA {
 		return new FInt32Range();
 	}
 
-	static void __pushFInt32Range(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFInt32Range(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFInt32Range();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FInt32Range>(L, "FInt32Range", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFInt32Range(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFInt32Range(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FInt32Range*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FInt32Range nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -319,14 +393,18 @@ namespace NS_SLUA {
 		return new FFloatInterval();
 	}
 
-	static void __pushFFloatInterval(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFFloatInterval(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFFloatInterval();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FFloatInterval>(L, "FFloatInterval", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFFloatInterval(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFFloatInterval(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FFloatInterval*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FFloatInterval nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -334,14 +412,18 @@ namespace NS_SLUA {
 		return new FInt32Interval();
 	}
 
-	static void __pushFInt32Interval(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFInt32Interval(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFInt32Interval();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FInt32Interval>(L, "FInt32Interval", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFInt32Interval(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFInt32Interval(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FInt32Interval*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FInt32Interval nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -349,14 +431,18 @@ namespace NS_SLUA {
 		return new FPrimaryAssetType();
 	}
 
-	static void __pushFPrimaryAssetType(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFPrimaryAssetType(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFPrimaryAssetType();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FPrimaryAssetType>(L, "FPrimaryAssetType", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFPrimaryAssetType(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFPrimaryAssetType(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FPrimaryAssetType*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FPrimaryAssetType nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -364,14 +450,37 @@ namespace NS_SLUA {
 		return new FPrimaryAssetId();
 	}
 
-	static void __pushFPrimaryAssetId(lua_State* L, UStructProperty* p, uint8* parms) {
+	static void __pushFPrimaryAssetId(lua_State* L, FStructProperty* p, uint8* parms) {
 		auto ptr = __newFPrimaryAssetId();
 		p->CopyCompleteValue(ptr, parms);
 		LuaObject::push<FPrimaryAssetId>(L, "FPrimaryAssetId", ptr, UD_AUTOGC);
 	}
 
-	static void __checkFPrimaryAssetId(lua_State* L, UStructProperty* p, uint8* parms, int i) {
+	static void __checkFPrimaryAssetId(lua_State* L, FStructProperty* p, uint8* parms, int i) {
 		auto v = LuaObject::checkValue<FPrimaryAssetId*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FPrimaryAssetId nil value");
+			return;
+		}
+		p->CopyCompleteValue(parms, v);
+	}
+
+	static inline FDateTime* __newFDateTime() {
+		return new FDateTime();
+	}
+
+	static void __pushFDateTime(lua_State* L, FStructProperty* p, uint8* parms) {
+		auto ptr = __newFDateTime();
+		p->CopyCompleteValue(ptr, parms);
+		LuaObject::push<FDateTime>(L, "FDateTime", ptr, UD_AUTOGC);
+	}
+
+	static void __checkFDateTime(lua_State* L, FStructProperty* p, uint8* parms, int i) {
+		auto v = LuaObject::checkValue<FDateTime*>(L, i);
+		if (!v) {
+			luaL_error(L, "check FDateTime nil value");
+			return;
+		}
 		p->CopyCompleteValue(parms, v);
 	}
 
@@ -414,8 +523,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FSlateFontInfo operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_Size(lua_State* L) {
@@ -503,8 +612,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FSlateBrush operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_ImageSize(lua_State* L) {
@@ -733,8 +842,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FMargin operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_Left(lua_State* L) {
@@ -872,8 +981,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FGeometry operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_Size(lua_State* L) {
@@ -1149,8 +1258,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FSlateColor operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int GetSpecifiedColor(lua_State* L) {
@@ -1299,8 +1408,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FRotator operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_Pitch(lua_State* L) {
@@ -2925,8 +3034,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FLinearColor operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_R(lua_State* L) {
@@ -3482,8 +3591,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FColor operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_White(lua_State* L) {
@@ -3932,8 +4041,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FVector operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_X(lua_State* L) {
@@ -5332,8 +5441,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FVector2D operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_X(lua_State* L) {
@@ -6264,8 +6373,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FBox2D operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int __add(lua_State* L) {
@@ -7155,8 +7264,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FPrimaryAssetType operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int IsValid(lua_State* L) {
@@ -7229,8 +7338,8 @@ namespace NS_SLUA {
 				LuaObject::push(L, ret);
 				return 1;
 			}
-			luaL_error(L, "FPrimaryAssetId operator__eq error, arg=%d", lua_typename(L, 2));
-			return 0;
+			LuaObject::push(L, false);
+			return 1;
 		}
 
 		static int get_PrimaryAssetType(lua_State* L) {
@@ -7299,7 +7408,519 @@ namespace NS_SLUA {
 
 	};
 
-	int LuaWrapper::pushValue(lua_State* L, UStructProperty* p, UScriptStruct* uss, uint8* parms) {
+	struct FDateTimeWrapper {
+
+		static int __ctor(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto self = new FDateTime();
+				LuaObject::push<FDateTime>(L, "FDateTime", self, UD_AUTOGC);
+				return 1;
+			}
+			if (argc == 2) {
+				auto InTicks = LuaObject::checkValue<int64>(L, 2);
+				auto self = new FDateTime(InTicks);
+				LuaObject::push<FDateTime>(L, "FDateTime", self, UD_AUTOGC);
+				return 1;
+			}
+			if (argc > 2) {
+				auto year = LuaObject::checkValueOpt<int>(L, 2, 0);
+				auto month = LuaObject::checkValueOpt<int>(L, 3, 0);
+				auto day = LuaObject::checkValueOpt<int>(L, 4, 0);
+				auto hour = LuaObject::checkValueOpt<int>(L, 5, 0);
+				auto minute = LuaObject::checkValueOpt<int>(L, 6, 0);
+				auto second = LuaObject::checkValueOpt<int>(L, 7, 0);
+				auto millisecond = LuaObject::checkValueOpt<int>(L, 8, 0);
+				auto self = new FDateTime(year, month, day, hour, minute, second, millisecond);
+				LuaObject::push<FDateTime>(L, "FDateTime", self, UD_AUTOGC);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime() error, argc=%d", argc);
+			return 0;
+		}
+
+		static int __gc(lua_State* L) {
+			CheckSelf(FDateTime);
+			LuaObject::releaseLink(L, udptr);
+			if (udptr->flag & UD_AUTOGC) delete self;
+			return 0;
+		}
+
+		static int __eq(lua_State* L) {
+			CheckSelf(FDateTime);
+			if (LuaObject::matchType(L, 2, "FDateTime")) {
+				auto Other = LuaObject::checkValue<FDateTime*>(L, 2);
+				auto& OtherRef = *Other;
+				auto ret = (*self == OtherRef);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			LuaObject::push(L, false);
+			return 1;
+		}
+
+		static int __lt(lua_State* L) {
+			CheckSelf(FDateTime);
+			if (LuaObject::matchType(L, 2, "FDateTime")) {
+				auto Other = LuaObject::checkValue<FDateTime*>(L, 2);
+				auto& OtherRef = *Other;
+				auto ret = (*self < OtherRef);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "FDateTime operator__lt error, arg=%d", lua_typename(L, 2));
+			return 0;
+		}
+
+		static int __le(lua_State* L) {
+			CheckSelf(FDateTime);
+			if (LuaObject::matchType(L, 2, "FDateTime")) {
+				auto Other = LuaObject::checkValue<FDateTime*>(L, 2);
+				auto& OtherRef = *Other;
+				auto ret = (*self <= OtherRef);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "FDateTime operator__le error, arg=%d", lua_typename(L, 2));
+			return 0;
+		}
+
+		static int ToString(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->ToString();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::ToString error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetDate(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				int OutYear = 0, OutMonth = 0, OutDay = 0;
+				self->GetDate(OutYear, OutMonth, OutDay);
+				LuaObject::push(L, OutYear);
+				LuaObject::push(L, OutMonth);
+				LuaObject::push(L, OutDay);
+				return 3;
+			}
+			luaL_error(L, "call FDateTime::GetDate error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetDay(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetDay();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetDay error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetDayOfWeek(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetDayOfWeek();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetDayOfWeek error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetDayOfYear(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetDayOfWeek();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetDayOfWeek error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetHour(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetHour();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetHour error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetHour12(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetHour12();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetHour12 error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetJulianDay(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetJulianDay();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetJulianDay error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetModifiedJulianDay(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetModifiedJulianDay();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetModifiedJulianDay error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetMillisecond(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetMillisecond();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetMillisecond error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetMinute(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetMinute();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetMinute error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetMonth(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetMonth();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetMonth error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetMonthOfYear(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetMonthOfYear();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetMonthOfYear error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetSecond(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetSecond();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetSecond error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetTicks(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetTicks();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetTicks error, argc=%d", argc);
+			return 0;
+		}
+
+		static int GetYear(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->GetYear();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::GetYear error, argc=%d", argc);
+			return 0;
+		}
+
+		static int IsAfternoon(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->IsAfternoon();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::IsAfternoon error, argc=%d", argc);
+			return 0;
+		}
+
+		static int IsMorning(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->IsMorning();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::IsMorning error, argc=%d", argc);
+			return 0;
+		}
+
+		static int ToHttpDate(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->ToHttpDate();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::ToHttpDate error, argc=%d", argc);
+			return 0;
+		}
+
+		static int ToUnixTimestamp(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				CheckSelf(FDateTime);
+				auto ret = self->ToUnixTimestamp();
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::ToUnixTimestamp error, argc=%d", argc);
+			return 0;
+		}
+
+		static int DaysInMonth(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 2) {
+				auto InYear = LuaObject::checkValue<int32>(L, 1);
+				auto InMonth = LuaObject::checkValue<int32>(L, 2);
+				auto ret = FDateTime::DaysInMonth(InYear, InMonth);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::DaysInMonth error, argc=%d", argc);
+			return 0;
+		}
+
+		static int DaysInYear(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto InYear = LuaObject::checkValue<int32>(L, 1);
+				auto ret = FDateTime::DaysInYear(InYear);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::DaysInYear error, argc=%d", argc);
+			return 0;
+		}
+
+		static int FromJulianDay(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto InJulianDay = LuaObject::checkValue<double>(L, 1);
+				auto ret = FDateTime::FromJulianDay(InJulianDay);
+				LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::FromJulianDay error, argc=%d", argc);
+			return 0;
+		}
+
+		static int FromUnixTimestamp(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto InUnixTime = LuaObject::checkValue<int64>(L, 1);
+				auto ret = FDateTime::FromUnixTimestamp(InUnixTime);
+				LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::FromUnixTimestamp error, argc=%d", argc);
+			return 0;
+		}
+
+		static int IsLeapYear(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto InYear = LuaObject::checkValue<int32>(L, 1);
+				auto ret = FDateTime::IsLeapYear(InYear);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::IsLeapYear error, argc=%d", argc);
+			return 0;
+		}
+
+		static int MaxValue(lua_State* L) {
+			auto argc = lua_gettop(L);
+			auto ret = FDateTime::MaxValue();
+			LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+			return 1;
+		}
+
+		static int MinValue(lua_State* L) {
+			auto argc = lua_gettop(L);
+			auto ret = FDateTime::MinValue();
+			LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+			return 1;
+		}
+
+		static int Now(lua_State* L) {
+			auto argc = lua_gettop(L);
+			auto ret = FDateTime::Now();
+			LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+			return 1;
+		}
+
+		static int Parse(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto InDateTimeString = LuaObject::checkValue<FString>(L, 1);
+				FDateTime outDateTime;
+				auto ret = FDateTime::Parse(InDateTimeString, outDateTime);
+				LuaObject::push(L, ret);
+				if (ret) {
+					LuaObject::push(L, "FDateTime", new FDateTime(outDateTime), UD_AUTOGC);
+					return 2;
+				}
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::Parse error, argc=%d", argc);
+			return 0;
+		}
+
+		static int ParseHttpDate(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 1) {
+				auto InHttpDate = LuaObject::checkValue<FString>(L, 1);
+				FDateTime outDateTime;
+				auto ret = FDateTime::ParseHttpDate(InHttpDate, outDateTime);
+				LuaObject::push(L, ret);
+				if (ret) {
+					LuaObject::push(L, "FDateTime", new FDateTime(outDateTime), UD_AUTOGC);
+					return 2;
+				}
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::ParseHttpDate error, argc=%d", argc);
+			return 0;
+		}
+
+		static int Today(lua_State* L) {
+			auto argc = lua_gettop(L);
+			auto ret = FDateTime::Today();
+			LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+			return 1;
+		}
+
+		static int UtcNow(lua_State* L) {
+			auto argc = lua_gettop(L);
+			auto ret = FDateTime::UtcNow();
+			LuaObject::push(L, "FDateTime", new FDateTime(ret), UD_AUTOGC);
+			return 1;
+		}
+
+		static int Validate(lua_State* L) {
+			auto argc = lua_gettop(L);
+			if (argc == 7) {
+				auto InYear = LuaObject::checkValue<int32>(L, 1);
+				auto InMonth = LuaObject::checkValue<int32>(L, 2);
+				auto InDay = LuaObject::checkValue<int32>(L, 3);
+				auto InHour = LuaObject::checkValue<int32>(L, 4);
+				auto InMinute = LuaObject::checkValue<int32>(L, 5);
+				auto InSecond = LuaObject::checkValue<int32>(L, 6);
+				auto InMillisecond = LuaObject::checkValue<int32>(L, 7);
+				auto ret = FDateTime::Validate(InYear, InMonth, InDay, InHour, InMinute, InSecond, InMillisecond);
+				LuaObject::push(L, ret);
+				return 1;
+			}
+			luaL_error(L, "call FDateTime::ToString error, argc=%d", argc);
+			return 0;
+		}
+
+		static void bind(lua_State* L) {
+			AutoStack autoStack(L);
+			LuaObject::newType(L, "FDateTime");
+			LuaObject::addOperator(L, "__eq", __eq);
+			LuaObject::addOperator(L, "__lt", __lt);
+			LuaObject::addOperator(L, "__le", __le);
+			LuaObject::addMethod(L, "ToString", ToString, true);
+			LuaObject::addMethod(L, "GetDate", GetDate, true);
+			LuaObject::addMethod(L, "GetDay", GetDay, true);
+			LuaObject::addMethod(L, "GetDayOfWeek", GetDayOfWeek, true);
+			LuaObject::addMethod(L, "GetDayOfYear", GetDayOfYear, true);
+			LuaObject::addMethod(L, "GetHour", GetHour, true);
+			LuaObject::addMethod(L, "GetHour12", GetHour12, true);
+			LuaObject::addMethod(L, "GetJulianDay", GetJulianDay, true);
+			LuaObject::addMethod(L, "GetModifiedJulianDay", GetModifiedJulianDay, true);
+			LuaObject::addMethod(L, "GetMillisecond", GetMillisecond, true);
+			LuaObject::addMethod(L, "GetMinute", GetMinute, true);
+			LuaObject::addMethod(L, "GetMonth", GetMonth, true);
+			LuaObject::addMethod(L, "GetMonthOfYear", GetMonthOfYear, true);
+			LuaObject::addMethod(L, "GetSecond", GetSecond, true);
+			LuaObject::addMethod(L, "GetTicks", GetTicks, true);
+			LuaObject::addMethod(L, "GetYear", GetYear, true);
+			LuaObject::addMethod(L, "IsAfternoon", IsAfternoon, true);
+			LuaObject::addMethod(L, "IsMorning", IsMorning, true);
+			LuaObject::addMethod(L, "ToHttpDate", ToHttpDate, true);
+			LuaObject::addMethod(L, "ToUnixTimestamp", ToUnixTimestamp, true);
+			LuaObject::addMethod(L, "DaysInMonth", DaysInMonth, false);
+			LuaObject::addMethod(L, "DaysInYear", DaysInYear, false);
+			LuaObject::addMethod(L, "FromJulianDay", FromJulianDay, false);
+			LuaObject::addMethod(L, "FromUnixTimestamp", FromUnixTimestamp, false);
+			LuaObject::addMethod(L, "IsLeapYear", IsLeapYear, false);
+			LuaObject::addMethod(L, "MaxValue", MaxValue, false);
+			LuaObject::addMethod(L, "MinValue", MinValue, false);
+			LuaObject::addMethod(L, "Now", Now, false);
+			LuaObject::addMethod(L, "Parse", Parse, false);
+			LuaObject::addMethod(L, "ParseHttpDate", ParseHttpDate, false);
+			LuaObject::addMethod(L, "Today", Today, false);
+			LuaObject::addMethod(L, "UtcNow", UtcNow, false);
+			LuaObject::addMethod(L, "Validate", Validate, false);
+			LuaObject::finishType(L, "FDateTime", __ctor, __gc);
+		}
+
+	};
+
+	int LuaWrapper::pushValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms) {
 		auto vptr = _pushStructMap.Find(uss);
 		if (vptr != nullptr) {
 			(*vptr)(L, p, parms);
@@ -7309,7 +7930,7 @@ namespace NS_SLUA {
 		}
 	}
 
-	int LuaWrapper::checkValue(lua_State* L, UStructProperty* p, UScriptStruct* uss, uint8* parms, int i) {
+	int LuaWrapper::checkValue(lua_State* L, FStructProperty* p, UScriptStruct* uss, uint8* parms, int i) {
 		auto vptr = _checkStructMap.Find(uss);
 		if (vptr != nullptr) {
 			(*vptr)(L, p, parms, i);
@@ -7430,6 +8051,13 @@ namespace NS_SLUA {
 		_pushStructMap.Add(FPrimaryAssetIdStruct, __pushFPrimaryAssetId);
 		_checkStructMap.Add(FPrimaryAssetIdStruct, __checkFPrimaryAssetId);
 		FPrimaryAssetIdWrapper::bind(L);
+
+#if (ENGINE_MINOR_VERSION>=21) && (ENGINE_MAJOR_VERSION>=4)
+		FDateTimeStruct = TBaseStructure<FDateTime>::Get();
+		_pushStructMap.Add(FDateTimeStruct, __pushFDateTime);
+		_checkStructMap.Add(FDateTimeStruct, __checkFDateTime);
+		FDateTimeWrapper::bind(L);
+#endif
 	}
 
 }

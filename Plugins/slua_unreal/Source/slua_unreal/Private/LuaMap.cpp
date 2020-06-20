@@ -36,12 +36,12 @@ namespace NS_SLUA {
 		SluaUtil::reg(L, "Map", __ctor);
 	}
 
-	int LuaMap::push(lua_State* L, UProperty* keyProp, UProperty* valueProp, const FScriptMap* buf, bool frombp) {
+	int LuaMap::push(lua_State* L, FProperty* keyProp, FProperty* valueProp, const FScriptMap* buf, bool frombp) {
 		auto luaMap = new LuaMap(keyProp, valueProp, buf, frombp);
 		return LuaObject::pushType(L, luaMap, "LuaMap", setupMT, gc);
 	}
 
-	int LuaMap::push(lua_State* L, UMapProperty* prop, UObject* obj) {
+	int LuaMap::push(lua_State* L, FMapProperty* prop, UObject* obj) {
 		auto scriptMap = prop->ContainerPtrToValuePtr<FScriptMap>(obj);
 		if(LuaObject::getFromCache(L,scriptMap,"LuaMap")) return 1;
 		auto luaMap = new LuaMap(prop,obj);
@@ -50,24 +50,26 @@ namespace NS_SLUA {
 		return 1;
 	}
 
-	void LuaMap::clone(FScriptMap* dest,UProperty* keyProp, UProperty* valueProp,const FScriptMap* src) {
+	void LuaMap::clone(FScriptMap* dest,FProperty* keyProp, FProperty* valueProp,const FScriptMap* src) {
 		if(!src || src->Num()==0)
 			return;
 
 		FScriptMapHelper dstHelper = FScriptMapHelper::CreateHelperFormInnerProperties(keyProp,valueProp, dest);
 		FScriptMapHelper srcHelper = FScriptMapHelper::CreateHelperFormInnerProperties(keyProp,valueProp, src);
-		for (auto n = 0; n < srcHelper.Num(); n++) {
-			auto keyPtr = srcHelper.GetKeyPtr(n);
-			auto valuePtr = srcHelper.GetValuePtr(n);
-			dstHelper.AddPair(keyPtr, valuePtr);
+		for (auto n = 0; n < srcHelper.GetMaxIndex(); n++) {
+			if (srcHelper.IsValidIndex(n)) {
+				auto keyPtr = srcHelper.GetKeyPtr(n);
+				auto valuePtr = srcHelper.GetValuePtr(n);
+				dstHelper.AddPair(keyPtr, valuePtr);
+			}
 		}
 	}
 
 
-	LuaMap::LuaMap(UProperty* kp, UProperty* vp, const FScriptMap* buf, bool frombp) : 
+	LuaMap::LuaMap(FProperty* kp, FProperty* vp, const FScriptMap* buf, bool frombp) : 
 		map( new FScriptMap ),
-		keyProp(kp), 
-		valueProp(vp) ,
+		keyProp(kp),
+		valueProp(vp),
 		prop(nullptr),
 		propObj(nullptr),
 		helper(FScriptMapHelper::CreateHelperFormInnerProperties(keyProp, valueProp, map)) 
@@ -78,68 +80,62 @@ namespace NS_SLUA {
 		} else {
 			createdByBp = false;
 		}
+		// if map is cloned data, set a flag to free later
+		shouldFree = true;
 	} 
 
-	LuaMap::LuaMap(UMapProperty* p, UObject* obj) : 
+	LuaMap::LuaMap(FMapProperty* p, UObject* obj) : 
 		map( p->ContainerPtrToValuePtr<FScriptMap>(obj) ),
-		keyProp(p->KeyProp), 
-		valueProp(p->ValueProp) ,
+		keyProp(p->KeyProp),
+		valueProp(p->ValueProp),
 		prop(p),
 		propObj(obj),
-		helper(prop, map) ,
-		createdByBp(false)
+		helper(prop, map),
+		createdByBp(false),
+		shouldFree(false)
 	{
 	} 
 
 	LuaMap::~LuaMap() {
-		if (!propObj)
-		{
+		if (shouldFree) {
 			clear();
-			if (!prop) SafeDelete(map);
+			ensure(map);
+			SafeDelete(map);
 		}
-		keyProp = valueProp = nullptr;
+        keyProp = valueProp = nullptr;
 		prop = nullptr;
 		propObj = nullptr;
 	}
 
 	void LuaMap::AddReferencedObjects( FReferenceCollector& Collector )
     {
-		// I noticed this function be called in collect thread
-        // should add a lock, but I don't find any lock code in unreal engine codebase
-        // why?
-		
-        Collector.AddReferencedObject(keyProp);
-        Collector.AddReferencedObject(valueProp);
-		if(prop) Collector.AddReferencedObject(prop);
+		if (keyProp) keyProp->AddReferencedObjects(Collector);
+        if(valueProp) valueProp->AddReferencedObjects(Collector);
+		if(prop) prop->AddReferencedObjects(Collector);
 		if(propObj) Collector.AddReferencedObject(propObj);
 
-		// if is empty 
-		int num = this->num();
-		if(num<=0) return;
-
-		int index = 0;
+		// if empty or owner object had been collected
+		// AddReferencedObject will auto null propObj
+		if((!shouldFree && !propObj) || num()<=0) return;
+		bool rehash = false;
 		// for each valid entry of map
-        do {
-			if(num <=0 ) return;
+		for (int index = helper.GetMaxIndex()-1;index>=0; index--) {
 
 			if (helper.IsValidIndex(index)) {
 				auto pairPtr = helper.GetPairPtr(index);
 				auto keyPtr = getKeyPtr(pairPtr);
 				auto valuePtr = getValuePtr(pairPtr);
 
-				bool keyChanged = false;
-				bool valuesChanged = false;
-
-				keyChanged = LuaReference::addRefByProperty(Collector, keyProp, keyPtr, false);
-				valuesChanged = LuaReference::addRefByProperty(Collector, valueProp, valuePtr, false);
-				if(keyChanged) helper.Rehash();
-				
-				index += 1;
-				num -= 1;
-			} else {
-				index += 1;
+				bool keyChanged = LuaReference::addRefByProperty(Collector, keyProp, keyPtr, false);
+				bool valuesChanged = LuaReference::addRefByProperty(Collector, valueProp, valuePtr, false);
+				// if key auto null, we remove pair
+				if (keyChanged || keyChanged) {
+					removeAt(index);
+					rehash = true;
+				}
 			}
-		} while (true);
+		}
+		if (rehash) helper.Rehash();
     }
 
 	uint8* LuaMap::getKeyPtr(uint8* pairPtr) {
@@ -165,7 +161,7 @@ namespace NS_SLUA {
 		checkSlow(Slack >= 0);
 
 		int32 OldNum = num();
-		if(!prop) {
+		if(shouldFree) {
 			if (OldNum) {
 				destructItems(0, OldNum);
 			}
@@ -178,7 +174,7 @@ namespace NS_SLUA {
 	// modified FScriptMapHelper::DestructItems function to add value property offset on value ptr 
 	void LuaMap::destructItems(uint8* PairPtr, uint32 Stride, int32 Index, int32 Count, bool bDestroyKeys, bool bDestroyValues) {
 		// if map is owned by uobject, don't destructItems
-		if(prop) return;
+		if(!shouldFree) return;
 		auto valueOffset = createdByBp ? 0 : helper.MapLayout.ValueOffset;
 		for (; Count; ++Index) {
 			if (helper.IsValidIndex(Index)) {
@@ -215,7 +211,7 @@ namespace NS_SLUA {
 
 	// modified FScriptMapHelper::RemovePair function to call LuaMap::RemoveAt
 	bool LuaMap::removePair(const void* KeyPtr) {
-		UProperty* LocalKeyPropForCapture = keyProp;
+		FProperty* LocalKeyPropForCapture = keyProp;
 		if (uint8* Entry = map->FindValue(KeyPtr, helper.MapLayout,
 			[LocalKeyPropForCapture](const void* ElementKey) { return LocalKeyPropForCapture->GetValueTypeHash(ElementKey); },
 			[LocalKeyPropForCapture](const void* A, const void* B) { return LocalKeyPropForCapture->Identical(A, B); }
@@ -247,8 +243,15 @@ namespace NS_SLUA {
 	int LuaMap::__ctor(lua_State* L) {
 		auto keyType = (EPropertyClass)LuaObject::checkValue<int>(L, 1);
 		auto valueType = (EPropertyClass)LuaObject::checkValue<int>(L, 2);
-		auto keyProp = PropertyProto::createProperty(keyType);
-		auto valueProp = PropertyProto::createProperty(valueType);
+		auto cls = LuaObject::checkValueOpt<UClass*>(L, 3, nullptr);
+		auto cls2 = LuaObject::checkValueOpt<UClass*>(L, 4, nullptr);
+		if (keyType == EPropertyClass::Object && !cls)
+			luaL_error(L, "UObject key should have 3rd parameter is UClass");
+		if (valueType == EPropertyClass::Object && !cls2)
+			luaL_error(L, "UObject value should have 4th parameter is UClass");
+
+		auto keyProp = PropertyProto::createProperty({ keyType,cls });
+		auto valueProp = PropertyProto::createProperty({ valueType,cls2 });
 		return push(L, keyProp, valueProp, nullptr);
 	}
 

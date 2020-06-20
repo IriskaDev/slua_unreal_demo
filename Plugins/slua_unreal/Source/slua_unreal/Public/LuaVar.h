@@ -215,17 +215,31 @@ namespace NS_SLUA {
             return ret.castTo<RET>();
         }
 
+		template<class ...ARGS>
+		LuaVar callField(const char* field, ARGS&& ...args) const {
+			if (!isTable()) {
+				Log::Error("LuaVar is not a table, can't call field");
+				return LuaVar();
+			}
+			if (!isValid()) {
+				Log::Error("State of lua function is invalid");
+				return LuaVar();
+			}
+			LuaVar ret = getFromTable<LuaVar>(field);
+			return ret.call(std::forward<ARGS>(args)...);
+		}
+
         // call function with pre-pushed n args
         inline LuaVar callWithNArg(int n) {
-            int nret = docall(n);
             auto L = getState();
+            int nret = docall(n);
             auto ret = LuaVar::wrapReturn(L,nret);
             lua_pop(L,nret);
             return ret;
         }
 
-        bool toProperty(UProperty* p,uint8* ptr);
-        bool callByUFunction(UFunction* ufunc,uint8* parms,LuaVar* pSelf = nullptr);
+        bool toProperty(FProperty* p,uint8* ptr);
+        bool callByUFunction(UFunction* ufunc,uint8* parms,LuaVar* pSelf = nullptr,FOutParmRec* OutParms = nullptr);
 
 		// get associate state
 		lua_State* getState() const;
@@ -325,7 +339,7 @@ namespace NS_SLUA {
         }
 
         int docall(int argn) const;
-        int pushArgByParms(UProperty* prop,uint8* parms);
+        int pushArgByParms(FProperty* prop,uint8* parms);
 
         void clone(const LuaVar& other);
         void move(LuaVar&& other);
